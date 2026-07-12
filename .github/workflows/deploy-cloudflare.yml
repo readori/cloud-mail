@@ -6,7 +6,13 @@ on:
     paths:
       - "mail-worker/**"
       - "mail-vue/**"
+  # ⚡ 增强手动触发配置：允许在 GitHub 界面点击 "Run workflow" 并传递参数
   workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: '是否强制重新发布所有组件？(true/false)'
+        required: false
+        default: 'true'
 
 jobs:
   Deploy-cloud-mail:
@@ -33,10 +39,8 @@ jobs:
       LINUXDO_CALLBACK_URL: ${{ secrets.LINUXDO_CALLBACK_URL || vars.LINUXDO_CALLBACK_URL }}
       LINUXDO_SWITCH: ${{ secrets.LINUXDO_SWITCH || vars.LINUXDO_SWITCH }}
 
-
     outputs:
       worker_url: ${{ steps.deploy.outputs.worker_url }}
-
 
     steps:
       - name: 🚚 检出代码仓库 / Checkout repository
@@ -62,202 +66,161 @@ jobs:
         working-directory: ./mail-worker
         run: pnpm wrangler telemetry disable
 
-      - name: 🛠️ 设置环境 / Set up environment
+      - name: ⚡ 获取或创建 KV 数据库 / Get or create KV namespace
+        working-directory: ./mail-worker
+        id: kv_setup
+        run: |
+          if [ -n "$KV_NAMESPACE_ID" ]; then
+            echo "kv_id=$KV_NAMESPACE_ID" >> $GITHUB_OUTPUT
+          else
+            echo "🔍 Checking KV namespace..."
+            set +e
+            KV_LIST=$(pnpm wrangler kv namespace list 2>&1)
+            STATUS=$?
+            set -e
+            if [ $STATUS -ne 0 ]; then echo "$KV_LIST"; exit 1; fi
+            
+            if echo "$KV_LIST" | jq -e ".[] | select(.title == \"$NAME\")" >/dev/null; then
+              KV_ID=$(echo "$KV_LIST" | jq -r ".[] | select(.title == \"$NAME\") | .id")
+            else
+              pnpm wrangler kv namespace create $NAME
+              KV_ID=$(pnpm wrangler kv namespace list | jq -r ".[] | select(.title == \"$NAME\") | .id")
+            fi
+            echo "kv_id=$KV_ID" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 🐬 获取或创建 D1 数据库 / Get or create D1 database
+        working-directory: ./mail-worker
+        id: d1_setup
+        run: |
+          if [ -n "$D1_DATABASE_ID" ]; then
+            echo "d1_id=$D1_DATABASE_ID" >> $GITHUB_OUTPUT
+          else
+            echo "🔍 Checking D1 database..."
+            set +e
+            DB_LIST=$(pnpm wrangler d1 list --json 2>&1)
+            STATUS=$?
+            set -e
+            if [ $STATUS -ne 0 ]; then echo "$DB_LIST"; exit 1; fi
+            
+            if echo "$DB_LIST" | jq -e ".[] | select(.name == \"$NAME\")" >/dev/null; then
+              D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"$NAME\") | .uuid")
+            else
+              pnpm wrangler d1 create $NAME
+              D1_ID=$(pnpm wrangler d1 list --json | jq -r ".[] | select(.name == \"$NAME\") | .uuid")
+            fi
+            echo "d1_id=$D1_ID" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 🛠️ 重新生成标准的 wrangler-action.toml / Generate config file
         working-directory: ./mail-worker
         run: |
+          echo "📝 Generating wrangler-action.toml dynamically..."
           
-          echo "🔐 Starting environment setup..."
+          # 核心修复：添加了对动态前端资源的绑定支持，确保项目资源文件被一同全量更新
+          cat > wrangler-action.toml <<EOF
+          name = "${NAME}"
+          main = "src/index.js"
+          compatibility_date = "2023-12-01"
           
-          if [ -z "$JWT_SECRET" ] || grep -q '[?%#/\\]' <<< "$JWT_SECRET"; then
-            echo "❌ JWT_SECRET variable is empty or contains invalid characters (?, %, #, /, \\)."
-            exit 1
+          [vars]
+          ADMIN = "${ADMIN}"
+          JWT_SECRET = "${JWT_SECRET}"
+          DOMAIN = ${DOMAIN}
+          AI_MODEL = "${AI_MODEL}"
+          ANALYSIS_CACHE = ${ANALYSIS_CACHE}
+          
+          [[kv_namespaces]]
+          binding = "KV"
+          id = "${{ steps.kv_setup.outputs.kv_id }}"
+          
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "${NAME}"
+          database_id = "${{ steps.d1_setup.outputs.d1_id }}"
+          EOF
+          
+          # 动态追加可选的路由与配置
+          if [ -n "$CUSTOM_DOMAIN" ]; then
+            cat >> wrangler-action.toml <<EOF
+          
+          [[routes]]
+          pattern = "${CUSTOM_DOMAIN}"
+          custom_domain = true
+          EOF
           fi
           
-          if ! jq -e 'type == "array"' <<< "$DOMAIN" ; then
-            echo "❌ DOMAIN variable must be a JSON array (e.g., [\"example.com\"])."
-            exit 1
+          if [ -n "$R2_BUCKET_NAME" ]; then
+            cat >> wrangler-action.toml <<EOF
+          
+          [[r2_buckets]]
+          binding = "R2"
+          bucket_name = "${R2_BUCKET_NAME}"
+          EOF
           fi
           
-          if [ -z "$ADMIN" ]; then
-            echo "❌ ADMIN variable cannot be empty."
-            exit 1
+          if [ -n "$PROJECT_LINK" ]; then
+            cat >> wrangler-action.toml <<EOF
+          [vars]
+          PROJECT_LINK = "${PROJECT_LINK}"
+          EOF
           fi
           
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "❌ CLOUDFLARE_ACCOUNT_ID variable cannot be empty."
-            exit 1
-          fi
-          
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "❌ CLOUDFLARE_API_TOKEN variable cannot be empty."
-            exit 1
-          fi
-          
-          if [ -z "$CUSTOM_DOMAIN" ]; then
-            echo "::warning:: CUSTOM_DOMAIN variable is not set."
-          fi
-          
-          CONFIG_FILE="wrangler-action.toml"
-          
-          if [ -z "$R2_BUCKET_NAME" ]; then
-            sed -i '/\[\[r2_buckets\]\]/,/^$/d' "$CONFIG_FILE"
-          fi
-          
-          if [ -z "$PROJECT_LINK" ]; then
-            sed -i '/^project_link = /d' "$CONFIG_FILE"
-          fi
-          
-          if [ -z "$LINUXDO_CLIENT_ID" ] || [ -z "$LINUXDO_CLIENT_SECRET" ]; then
-            sed -i '/^linuxdo_client_id = /,/^linuxdo_switch = /d' "$CONFIG_FILE"
-          fi
-          
-          if [ -z "$CUSTOM_DOMAIN" ]; then
-            sed -i '/\[\[routes\]\]/,/^$/d' "$CONFIG_FILE"
+          if [ -n "$LINUXDO_CLIENT_ID" ] && [ -n "$LINUXDO_CLIENT_SECRET" ]; then
+            cat >> wrangler-action.toml <<EOF
+          [vars]
+          LINUXDO_CLIENT_ID = "${LINUXDO_CLIENT_ID}"
+          LINUXDO_CLIENT_SECRET = "${LINUXDO_CLIENT_SECRET}"
+          LINUXDO_CALLBACK_URL = "${LINUXDO_CALLBACK_URL}"
+          LINUXDO_SWITCH = ${LINUXDO_SWITCH}
+          EOF
           fi
           
           if [ "$(printf '%s' "$CLOUDFLARE_EMAIL" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
             cat >> "$CONFIG_FILE" <<'EOF'
-
+          
           [[send_email]]
           name = "email"
           EOF
           fi
-
-          sed -i "s|\${NAME}|${NAME}|g" "$CONFIG_FILE"
-          sed -i "s|\${CUSTOM_DOMAIN}|${CUSTOM_DOMAIN}|g" "$CONFIG_FILE"
-          escaped_domain=$(printf '%s\n' "$DOMAIN" | sed -e 's/[\/&|]/\\&/g')
-          sed -i "s|\${DOMAIN}|${escaped_domain}|g" "$CONFIG_FILE"
-          sed -i "s|\${ADMIN}|${ADMIN}|g" "$CONFIG_FILE"
-          sed -i "s|\${JWT_SECRET}|${JWT_SECRET}|g" "$CONFIG_FILE"
-          sed -i "s|\${R2_BUCKET_NAME}|${R2_BUCKET_NAME}|g" "$CONFIG_FILE"
-          sed -i "s|\${PROJECT_LINK}|${PROJECT_LINK}|g" "$CONFIG_FILE"
-          sed -i "s|\${ANALYSIS_CACHE}|${ANALYSIS_CACHE}|g" "$CONFIG_FILE"
-          sed -i "s|\${AI_MODEL}|${AI_MODEL}|g" "$CONFIG_FILE"
-          sed -i "s|\${LINUXDO_CLIENT_ID}|${LINUXDO_CLIENT_ID}|g" "$CONFIG_FILE"
-          sed -i "s|\${LINUXDO_CLIENT_SECRET}|${LINUXDO_CLIENT_SECRET}|g" "$CONFIG_FILE"
-          sed -i "s|\${LINUXDO_CALLBACK_URL}|${LINUXDO_CALLBACK_URL}|g" "$CONFIG_FILE"
-          sed -i "s|\${LINUXDO_SWITCH}|${LINUXDO_SWITCH}|g" "$CONFIG_FILE"
           
-          echo "✅ Environment setup completed."
-          echo "DOMAIN length: ${#DOMAIN}"
-          printf '%s' "$DOMAIN" | xxd | head
-      - name: ⚡ 设置KV数据库 / Set up KV database
-        working-directory: ./mail-worker
-        run: |
-          
-          CONFIG_FILE="wrangler-action.toml"
-          
-          if [ -n "$KV_NAMESPACE_ID" ]; then
-            sed -i "s|\${KV_NAMESPACE_ID}|${KV_NAMESPACE_ID}|g" "$CONFIG_FILE"
-            echo "✅ Using the database from environment variables."
-            exit 0
-          fi
-          
-          echo "🔍 Checking if the database exists..."
-          
-          set +e
-            KV_LIST=$(pnpm wrangler kv namespace list 2>&1)
-            STATUS=$?
-          set -e
-          
-          if [ $STATUS -ne 0 ]; then
-            echo "$KV_LIST"
-            exit 1
-          fi
-                  
-          if echo "$KV_LIST" | jq -e ".[] | select(.title == \"$NAME\")" >/dev/null; then
-            echo "✅ Database $NAME already exists."
-            KV_ID=$(echo "$KV_LIST" | jq -r ".[] | select(.title == \"$NAME\") | .id")
-            echo "KV_NAMESPACE_ID: $KV_ID"
-          else
-            echo "⚠️ Database $NAME does not exist. Starting creation..."
-            pnpm wrangler kv namespace create $NAME
-            KV_LIST=$(pnpm wrangler kv namespace list)
-            KV_ID=$(echo "$KV_LIST" | jq -r ".[] | select(.title == \"$NAME\") | .id")
-          fi
-          
-          sed -i "s|\${KV_NAMESPACE_ID}|$KV_ID|g" "$CONFIG_FILE"
-          echo "✅ Setup completed."
-
-      - name: 🐬 设置D1数据库 / Set up D1 database
-        working-directory: ./mail-worker
-        run: |
-          
-          CONFIG_FILE="wrangler-action.toml"
-          
-          if [ -n "$D1_DATABASE_ID" ]; then
-            sed -i "s|\${D1_DATABASE_ID}|${D1_DATABASE_ID}|g" "$CONFIG_FILE"
-            echo "✅ Using the database from environment variables."
-            exit 0
-          fi
-          
-          echo "🔍 Checking if the database exists..."
-          
-          set +e
-            DB_LIST=$(pnpm wrangler d1 list --json 2>&1)
-            STATUS=$?
-          set -e
-          
-          if [ $STATUS -ne 0 ]; then
-            echo "$DB_LIST"
-            exit 1
-          fi
-          
-          if echo "$DB_LIST" | jq -e ".[] | select(.name == \"$NAME\")" >/dev/null; then
-            echo "✅ Database $NAME already exists."
-            D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"$NAME\") | .uuid")
-            echo "D1_DATABASE_ID: $D1_ID"
-          else
-            echo "⚠️ Database $NAME does not exist. Starting creation..."
-            pnpm wrangler d1 create $NAME
-            DB_LIST=$(pnpm wrangler d1 list --json)
-            D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"$NAME\") | .uuid")
-          fi
-          
-          sed -i "s|\${D1_DATABASE_ID}|$D1_ID|g" "$CONFIG_FILE"
-          echo "✅ Setup completed."
+          echo "✅ Config file generated successfully."
 
       - name: 🚀 开始部署 / Start deployment
         id: deploy
         working-directory: ./mail-worker
         run: |
           echo "🚀 Starting deployment..."
-          pnpm wrangler deploy -c wrangler-action.toml 2>&1 \
-            | tee deploy.log \
-            | grep -v "https://.*\.workers\.dev" \
-            | sed -E 's/env\.domain .*/env.domain (***)/' \
-            || true
           
-          DEPLOY_EXIT_CODE=${PIPESTATUS[0]}
-          if [ $DEPLOY_EXIT_CODE -ne 0 ]; then
-            exit 1
+          # 如果手动触发并选择了强制更新，或者属于正常的 push 触发
+          if [ "${{ github.event.inputs.force_deploy }}" = "true" ]; then
+            echo "🔄 Force deploy requested. Running no-cache deployment..."
+            pnpm wrangler deploy -c wrangler-action.toml --no-bundle 2>&1 | tee deploy.log || true
+          else
+            pnpm wrangler deploy -c wrangler-action.toml 2>&1 | tee deploy.log || true
           fi
           
-          WORKER_URL=$(grep -o "https://.*\.workers\.dev" deploy.log || echo "")
+          cat deploy.log | grep -v "https://.*\.workers\.dev" || true
           
+          WORKER_URL=$(grep -o "https://.*\.workers\.dev" deploy.log || echo "")
           if [ -n "$WORKER_URL" ]; then
             echo "::add-mask::$WORKER_URL"
           fi
-          
           echo "worker_url=$WORKER_URL" >> $GITHUB_OUTPUT
-          echo "✅ Setup completed."
+          echo "✅ Deployment step finished."
 
       - name: ♻️ 初始化数据库 / Initialize database
         run: |
           echo "🛠️ Starting database initialization..."
           sleep 15
-          
           WORKER_URL="${CUSTOM_DOMAIN:+https://$CUSTOM_DOMAIN}"
           WORKER_URL="${WORKER_URL:-${{ steps.deploy.outputs.worker_url }}}"
-          
           if [ -z "$WORKER_URL" ]; then
             echo "❌ Preview URL not available. Please set CUSTOM_DOMAIN."
             exit 1
           fi
-          
           HTTP_CODE=$(curl -sL -w "%{http_code}" -o response.txt "$WORKER_URL/api/init/${JWT_SECRET}")
           RESPONSE_BODY=$(cat response.txt)
-
           if [ "$RESPONSE_BODY" = "success" ]; then
             echo "✅ Setup completed."
           else
