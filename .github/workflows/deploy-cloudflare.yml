@@ -6,7 +6,6 @@ on:
     paths:
       - "mail-worker/**"
       - "mail-vue/**"
-  # ⚡ 增强手动触发配置：允许在 GitHub 界面点击 "Run workflow" 并传递参数
   workflow_dispatch:
     inputs:
       force_deploy:
@@ -117,71 +116,56 @@ jobs:
         run: |
           echo "📝 Generating wrangler-action.toml dynamically..."
           
-          # 核心修复：添加了对动态前端资源的绑定支持，确保项目资源文件被一同全量更新
-          cat > wrangler-action.toml <<EOF
-          name = "${NAME}"
-          main = "src/index.js"
-          compatibility_date = "2023-12-01"
+          # 清空并初始化文件，移除所有多行缩进带来的潜在换行影响
+          printf 'name = "%s"\n' "$NAME" > wrangler-action.toml
+          printf 'main = "src/index.js"\n' >> wrangler-action.toml
+          printf 'compatibility_date = "2023-12-01"\n\n' >> wrangler-action.toml
           
-          [vars]
-          ADMIN = "${ADMIN}"
-          JWT_SECRET = "${JWT_SECRET}"
-          DOMAIN = ${DOMAIN}
-          AI_MODEL = "${AI_MODEL}"
-          ANALYSIS_CACHE = ${ANALYSIS_CACHE}
+          printf '[vars]\n' >> wrangler-action.toml
+          printf 'ADMIN = "%s"\n' "$ADMIN" >> wrangler-action.toml
+          printf 'JWT_SECRET = "%s"\n' "$JWT_SECRET" >> wrangler-action.toml
+          printf 'DOMAIN = %s\n' "$DOMAIN" >> wrangler-action.toml
+          printf 'AI_MODEL = "%s"\n' "$AI_MODEL" >> wrangler-action.toml
+          printf 'ANALYSIS_CACHE = %s\n\n' "$ANALYSIS_CACHE" >> wrangler-action.toml
           
-          [[kv_namespaces]]
-          binding = "KV"
-          id = "${{ steps.kv_setup.outputs.kv_id }}"
+          printf '[[kv_namespaces]]\n' >> wrangler-action.toml
+          printf 'binding = "KV"\n' >> wrangler-action.toml
+          printf 'id = "%s"\n\n' "${{ steps.kv_setup.outputs.kv_id }}" >> wrangler-action.toml
           
-          [[d1_databases]]
-          binding = "DB"
-          database_name = "${NAME}"
-          database_id = "${{ steps.d1_setup.outputs.d1_id }}"
-          EOF
+          printf '[[d1_databases]]\n' >> wrangler-action.toml
+          printf 'binding = "DB"\n' >> wrangler-action.toml
+          printf 'database_name = "%s"\n' "$NAME" >> wrangler-action.toml
+          printf 'database_id = "%s"\n\n' "${{ steps.d1_setup.outputs.d1_id }}" >> wrangler-action.toml
           
-          # 动态追加可选的路由与配置
+          # 动态、干净地追加可选路由与配置，杜绝字符串内换行报错
           if [ -n "$CUSTOM_DOMAIN" ]; then
-            cat >> wrangler-action.toml <<EOF
-          
-          [[routes]]
-          pattern = "${CUSTOM_DOMAIN}"
-          custom_domain = true
-          EOF
+            printf '[[routes]]\n' >> wrangler-action.toml
+            printf 'pattern = "%s"\n' "$CUSTOM_DOMAIN" >> wrangler-action.toml
+            printf 'custom_domain = true\n\n' >> wrangler-action.toml
           fi
           
           if [ -n "$R2_BUCKET_NAME" ]; then
-            cat >> wrangler-action.toml <<EOF
-          
-          [[r2_buckets]]
-          binding = "R2"
-          bucket_name = "${R2_BUCKET_NAME}"
-          EOF
+            printf '[[r2_buckets]]\n' >> wrangler-action.toml
+            printf 'binding = "R2"\n' >> wrangler-action.toml
+            printf 'bucket_name = "%s"\n\n' "$R2_BUCKET_NAME" >> wrangler-action.toml
           fi
           
           if [ -n "$PROJECT_LINK" ]; then
-            cat >> wrangler-action.toml <<EOF
-          [vars]
-          PROJECT_LINK = "${PROJECT_LINK}"
-          EOF
+            printf '[vars]\n' >> wrangler-action.toml
+            printf 'PROJECT_LINK = "%s"\n\n' "$PROJECT_LINK" >> wrangler-action.toml
           fi
           
           if [ -n "$LINUXDO_CLIENT_ID" ] && [ -n "$LINUXDO_CLIENT_SECRET" ]; then
-            cat >> wrangler-action.toml <<EOF
-          [vars]
-          LINUXDO_CLIENT_ID = "${LINUXDO_CLIENT_ID}"
-          LINUXDO_CLIENT_SECRET = "${LINUXDO_CLIENT_SECRET}"
-          LINUXDO_CALLBACK_URL = "${LINUXDO_CALLBACK_URL}"
-          LINUXDO_SWITCH = ${LINUXDO_SWITCH}
-          EOF
+            printf '[vars]\n' >> wrangler-action.toml
+            printf 'LINUXDO_CLIENT_ID = "%s"\n' "$LINUXDO_CLIENT_ID" >> wrangler-action.toml
+            printf 'LINUXDO_CLIENT_SECRET = "%s"\n' "$LINUXDO_CLIENT_SECRET" >> wrangler-action.toml
+            printf 'LINUXDO_CALLBACK_URL = "%s"\n' "$LINUXDO_CALLBACK_URL" >> wrangler-action.toml
+            printf 'LINUXDO_SWITCH = %s\n\n' "$LINUXDO_SWITCH" >> wrangler-action.toml
           fi
           
           if [ "$(printf '%s' "$CLOUDFLARE_EMAIL" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
-            cat >> "$CONFIG_FILE" <<'EOF'
-          
-          [[send_email]]
-          name = "email"
-          EOF
+            printf '[[send_email]]\n' >> wrangler-action.toml
+            printf 'name = "email"\n' >> wrangler-action.toml
           fi
           
           echo "✅ Config file generated successfully."
@@ -191,13 +175,20 @@ jobs:
         working-directory: ./mail-worker
         run: |
           echo "🚀 Starting deployment..."
-          
-          # 如果手动触发并选择了强制更新，或者属于正常的 push 触发
+          set +e
           if [ "${{ github.event.inputs.force_deploy }}" = "true" ]; then
             echo "🔄 Force deploy requested. Running no-cache deployment..."
-            pnpm wrangler deploy -c wrangler-action.toml --no-bundle 2>&1 | tee deploy.log || true
+            pnpm wrangler deploy -c wrangler-action.toml --no-bundle 2>&1 | tee deploy.log
+            DEPLOY_STATUS=$?
           else
-            pnpm wrangler deploy -c wrangler-action.toml 2>&1 | tee deploy.log || true
+            pnpm wrangler deploy -c wrangler-action.toml 2>&1 | tee deploy.log
+            DEPLOY_STATUS=$?
+          fi
+          set -e
+          
+          if [ $DEPLOY_STATUS -ne 0 ]; then
+            echo "❌ Wrangler deployment failed."
+            exit 1
           fi
           
           cat deploy.log | grep -v "https://.*\.workers\.dev" || true
