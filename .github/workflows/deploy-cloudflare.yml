@@ -116,7 +116,16 @@ jobs:
         run: |
           echo "📝 Generating wrangler-action.toml dynamically..."
           
-          # 清空并初始化文件，移除所有多行缩进带来的潜在换行影响
+          # 安全过滤，确保即便环境变量为空，注入 TOML 的也是有效的双引号
+          SAFE_R2="${R2_BUCKET_NAME:-}"
+          SAFE_LINK="${PROJECT_LINK:-}"
+          SAFE_L_ID="${LINUXDO_CLIENT_ID:-}"
+          SAFE_L_SEC="${LINUXDO_CLIENT_SECRET:-}"
+          SAFE_L_URL="${LINUXDO_CALLBACK_URL:-}"
+          SAFE_L_SW="${LINUXDO_SWITCH:-false}"
+          SAFE_DOMAIN="${DOMAIN:-[]}"
+          SAFE_CACHE="${ANALYSIS_CACHE:-false}"
+          
           printf 'name = "%s"\n' "$NAME" > wrangler-action.toml
           printf 'main = "src/index.js"\n' >> wrangler-action.toml
           printf 'compatibility_date = "2023-12-01"\n\n' >> wrangler-action.toml
@@ -124,9 +133,9 @@ jobs:
           printf '[vars]\n' >> wrangler-action.toml
           printf 'ADMIN = "%s"\n' "$ADMIN" >> wrangler-action.toml
           printf 'JWT_SECRET = "%s"\n' "$JWT_SECRET" >> wrangler-action.toml
-          printf 'DOMAIN = %s\n' "$DOMAIN" >> wrangler-action.toml
+          printf 'DOMAIN = %s\n' "$SAFE_DOMAIN" >> wrangler-action.toml
           printf 'AI_MODEL = "%s"\n' "$AI_MODEL" >> wrangler-action.toml
-          printf 'ANALYSIS_CACHE = %s\n\n' "$ANALYSIS_CACHE" >> wrangler-action.toml
+          printf 'ANALYSIS_CACHE = %s\n\n' "$SAFE_CACHE" >> wrangler-action.toml
           
           printf '[[kv_namespaces]]\n' >> wrangler-action.toml
           printf 'binding = "KV"\n' >> wrangler-action.toml
@@ -137,30 +146,29 @@ jobs:
           printf 'database_name = "%s"\n' "$NAME" >> wrangler-action.toml
           printf 'database_id = "%s"\n\n' "${{ steps.d1_setup.outputs.d1_id }}" >> wrangler-action.toml
           
-          # 动态、干净地追加可选路由与配置，杜绝字符串内换行报错
           if [ -n "$CUSTOM_DOMAIN" ]; then
             printf '[[routes]]\n' >> wrangler-action.toml
             printf 'pattern = "%s"\n' "$CUSTOM_DOMAIN" >> wrangler-action.toml
             printf 'custom_domain = true\n\n' >> wrangler-action.toml
           fi
           
-          if [ -n "$R2_BUCKET_NAME" ]; then
+          if [ -n "$SAFE_R2" ]; then
             printf '[[r2_buckets]]\n' >> wrangler-action.toml
             printf 'binding = "R2"\n' >> wrangler-action.toml
-            printf 'bucket_name = "%s"\n\n' "$R2_BUCKET_NAME" >> wrangler-action.toml
+            printf 'bucket_name = "%s"\n\n' "$SAFE_R2" >> wrangler-action.toml
           fi
           
-          if [ -n "$PROJECT_LINK" ]; then
+          if [ -n "$SAFE_LINK" ]; then
             printf '[vars]\n' >> wrangler-action.toml
-            printf 'PROJECT_LINK = "%s"\n\n' "$PROJECT_LINK" >> wrangler-action.toml
+            printf 'PROJECT_LINK = "%s"\n\n' "$SAFE_LINK" >> wrangler-action.toml
           fi
           
-          if [ -n "$LINUXDO_CLIENT_ID" ] && [ -n "$LINUXDO_CLIENT_SECRET" ]; then
+          if [ -n "$SAFE_L_ID" ] && [ -n "$SAFE_L_SEC" ]; then
             printf '[vars]\n' >> wrangler-action.toml
-            printf 'LINUXDO_CLIENT_ID = "%s"\n' "$LINUXDO_CLIENT_ID" >> wrangler-action.toml
-            printf 'LINUXDO_CLIENT_SECRET = "%s"\n' "$LINUXDO_CLIENT_SECRET" >> wrangler-action.toml
-            printf 'LINUXDO_CALLBACK_URL = "%s"\n' "$LINUXDO_CALLBACK_URL" >> wrangler-action.toml
-            printf 'LINUXDO_SWITCH = %s\n\n' "$LINUXDO_SWITCH" >> wrangler-action.toml
+            printf 'LINUXDO_CLIENT_ID = "%s"\n' "$SAFE_L_ID" >> wrangler-action.toml
+            printf 'LINUXDO_CLIENT_SECRET = "%s"\n' "$SAFE_L_SEC" >> wrangler-action.toml
+            printf 'LINUXDO_CALLBACK_URL = "%s"\n' "$SAFE_L_URL" >> wrangler-action.toml
+            printf 'LINUXDO_SWITCH = %s\n\n' "$SAFE_L_SW" >> wrangler-action.toml
           fi
           
           if [ "$(printf '%s' "$CLOUDFLARE_EMAIL" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
@@ -187,7 +195,8 @@ jobs:
           set -e
           
           if [ $DEPLOY_STATUS -ne 0 ]; then
-            echo "❌ Wrangler deployment failed."
+            echo "❌ Wrangler deployment failed. Logs:"
+            cat deploy.log
             exit 1
           fi
           
