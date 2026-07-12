@@ -139,7 +139,8 @@ jobs:
           sed -i "s|\${LINUXDO_SWITCH}|${LINUXDO_SWITCH}|g" "$CONFIG_FILE"
           
           echo "✅ Environment setup completed."
-
+          echo "DOMAIN length: ${#DOMAIN}"
+          printf '%s' "$DOMAIN" | xxd | head
       - name: ⚡ 设置KV数据库 / Set up KV database
         working-directory: ./mail-worker
         run: |
