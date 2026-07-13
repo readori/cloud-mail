@@ -74,7 +74,6 @@ jobs:
           else
             echo "🔍 Checking KV namespace..."
             KV_LIST=$(pnpm wrangler kv namespace list)
-            
             if echo "$KV_LIST" | jq -e ".[] | select(.title == \"$NAME\")" >/dev/null; then
               KV_ID=$(echo "$KV_LIST" | jq -r ".[] | select(.title == \"$NAME\") | .id")
             else
@@ -93,7 +92,6 @@ jobs:
           else
             echo "🔍 Checking D1 database..."
             DB_LIST=$(pnpm wrangler d1 list --json)
-            
             if echo "$DB_LIST" | jq -e ".[] | select(.name == \"$NAME\")" >/dev/null; then
               D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"$NAME\") | .uuid")
             else
@@ -106,76 +104,78 @@ jobs:
       - name: 🛠️ 重新生成标准的 wrangler-action.toml / Generate config file
         working-directory: ./mail-worker
         run: |
-          echo "📝 Generating wrangler-action.toml dynamically..."
-          
-          SAFE_R2="${R2_BUCKET_NAME:-}"
-          SAFE_LINK="${PROJECT_LINK:-}"
-          SAFE_L_ID="${LINUXDO_CLIENT_ID:-}"
-          SAFE_L_SEC="${LINUXDO_CLIENT_SECRET:-}"
-          SAFE_L_URL="${LINUXDO_CALLBACK_URL:-}"
-          SAFE_L_SW="${LINUXDO_SWITCH:-false}"
-          SAFE_DOMAIN="${DOMAIN:-[]}"
-          SAFE_CACHE="${ANALYSIS_CACHE:-false}"
-          
-          printf 'name = "%s"\n' "$NAME" > wrangler-action.toml
-          printf 'main = "src/index.js"\n' >> wrangler-action.toml
-          printf 'compatibility_date = "2023-12-01"\n\n' >> wrangler-action.toml
-          
-          printf '[vars]\n' >> wrangler-action.toml
-          printf 'ADMIN = "%s"\n' "$ADMIN" >> wrangler-action.toml
-          printf 'JWT_SECRET = "%s"\n' "$JWT_SECRET" >> wrangler-action.toml
-          printf 'DOMAIN = %s\n' "$SAFE_DOMAIN" >> wrangler-action.toml
-          printf 'AI_MODEL = "%s"\n' "$AI_MODEL" >> wrangler-action.toml
-          printf 'ANALYSIS_CACHE = %s\n\n' "$SAFE_CACHE" >> wrangler-action.toml
-          
-          printf '[[kv_namespaces]]\n' >> wrangler-action.toml
-          printf 'binding = "KV"\n' >> wrangler-action.toml
-          printf 'id = "%s"\n\n' "${{ steps.kv_setup.outputs.kv_id }}" >> wrangler-action.toml
-          
-          printf '[[d1_databases]]\n' >> wrangler-action.toml
-          printf 'binding = "DB"\n' >> wrangler-action.toml
-          printf 'database_name = "%s"\n' "$NAME" >> wrangler-action.toml
-          printf 'database_id = "%s"\n\n' "${{ steps.d1_setup.outputs.d1_id }}" >> wrangler-action.toml
-          
-          if [ -n "$CUSTOM_DOMAIN" ]; then
-            printf '[[routes]]\n' >> wrangler-action.toml
-            printf 'pattern = "%s"\n' "$CUSTOM_DOMAIN" >> wrangler-action.toml
-            printf 'custom_domain = true\n\n' >> wrangler-action.toml
-          fi
-          
-          if [ -n "$SAFE_R2" ]; then
-            printf '[[r2_buckets]]\n' >> wrangler-action.toml
-            printf 'binding = "R2"\n' >> wrangler-action.toml
-            printf 'bucket_name = "%s"\n\n' "$SAFE_R2" >> wrangler-action.toml
-          fi
-          
-          if [ -n "$SAFE_LINK" ]; then
-            printf '[vars]\n' >> wrangler-action.toml
-            printf 'PROJECT_LINK = "%s"\n\n' "$SAFE_LINK" >> wrangler-action.toml
-          fi
-          
-          if [ -n "$SAFE_L_ID" ] && [ -n "$SAFE_L_SEC" ]; then
-            printf '[vars]\n' >> wrangler-action.toml
-            printf 'LINUXDO_CLIENT_ID = "%s"\n' "$SAFE_L_ID" >> wrangler-action.toml
-            printf 'LINUXDO_CLIENT_SECRET = "%s"\n' "$SAFE_L_SEC" >> wrangler-action.toml
-            printf 'LINUXDO_CALLBACK_URL = "%s"\n' "$SAFE_L_URL" >> wrangler-action.toml
-            printf 'LINUXDO_SWITCH = %s\n\n' "$SAFE_L_SW" >> wrangler-action.toml
-          fi
-          
-          if [ "$(printf '%s' "$CLOUDFLARE_EMAIL" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
-            printf '[[send_email]]\n' >> wrangler-action.toml
-            printf 'name = "email"\n' >> wrangler-action.toml
-          fi
-          
-          echo "✅ Config file generated successfully."
+          echo "📝 Generating wrangler-action.toml dynamically via Python..."
+          python3 -c '
+          import os, json
+
+          # 基础配置
+          toml = [
+              f"name = \"{os.environ.get(\"NAME\")}\"",
+              "main = \"src/index.js\"",
+              "compatibility_date = \"2023-12-01\"",
+              "",
+              "[vars]",
+              f"ADMIN = \"{os.environ.get(\"ADMIN\", \"\")}\"",
+              f"JWT_SECRET = \"{os.environ.get(\"JWT_SECRET\", \"\")}\"",
+              f"DOMAIN = {os.environ.get(\"DOMAIN\", \"[]\")}",
+              f"AI_MODEL = \"{os.environ.get(\"AI_MODEL\", \"\")}\"",
+              f"ANALYSIS_CACHE = {os.environ.get(\"ANALYSIS_CACHE\", \"false\").lower()}",
+              ""
+          ]
+
+          # KV 和 D1 绑定
+          toml.extend([
+              "[[kv_namespaces]]",
+              "binding = \"KV\"",
+              f"id = \"{os.environ.get(\"KV_ID\", \"\")}\"",
+              "",
+              "[[d1_databases]]",
+              "binding = \"DB\"",
+              f"database_name = \"{os.environ.get(\"NAME\")}\"",
+              f"database_id = \"{os.environ.get(\"D1_ID\", \"\")}\"",
+              ""
+          ])
+
+          # 可选配置安全过滤（只有当变量真正存在且非空时才写入）
+          custom_domain = os.environ.get("CUSTOM_DOMAIN")
+          if custom_domain and custom_domain.strip():
+              toml.extend(["[[routes]]", f"pattern = \"{custom_domain}\"", "custom_domain = true", ""])
+
+          r2_bucket = os.environ.get("R2_BUCKET_NAME")
+          if r2_bucket and r2_bucket.strip():
+              toml.extend(["[[r2_buckets]]", "binding = \"R2\"", f"bucket_name = \"{r2_bucket}\"", ""])
+
+          proj_link = os.environ.get("PROJECT_LINK")
+          if proj_link and proj_link.strip():
+              toml.extend(["[vars]", f"PROJECT_LINK = \"{proj_link}\"", ""])
+
+          l_id = os.environ.get("LINUXDO_CLIENT_ID")
+          l_sec = os.environ.get("LINUXDO_CLIENT_SECRET")
+          if l_id and l_id.strip() and l_sec and l_sec.strip():
+              toml.extend([
+                  "[vars]",
+                  f"LINUXDO_CLIENT_ID = \"{l_id}\"",
+                  f"LINUXDO_CLIENT_SECRET = \"{l_sec}\"",
+                  f"LINUXDO_CALLBACK_URL = \"{os.environ.get(\"LINUXDO_CALLBACK_URL\", \"\")}\"",
+                  f"LINUXDO_SWITCH = {os.environ.get(\"LINUXDO_SWITCH\", \"false\").lower()}",
+                  ""
+              ])
+
+          if os.environ.get("CLOUDFLARE_EMAIL", "").lower() == "true":
+              toml.extend(["[[send_email]]", "name = \"email\"", ""])
+
+          with open("wrangler-action.toml", "w", encoding="utf-8") as f:
+              f.write("\n".join(toml))
+          '
+        env:
+          KV_ID: ${{ steps.kv_setup.outputs.kv_id }}
+          D1_ID: ${{ steps.d1_setup.outputs.d1_id }}
 
       - name: 🚀 开始部署 / Start deployment
         id: deploy
         working-directory: ./mail-worker
         run: |
           echo "🚀 Starting deployment..."
-          
-          # 移除了所有隐式忽略错误的管线控制，Wrangler 旦凡出错直接向 GitHub 抛出非0状态码
           if [ "${{ github.event.inputs.force_deploy }}" = "true" ]; then
             echo "🔄 Force deploy requested. Running no-cache deployment..."
             pnpm wrangler deploy -c wrangler-action.toml --no-bundle | tee deploy.log
@@ -201,7 +201,6 @@ jobs:
             exit 1
           fi
           
-          # 移除了屏蔽状态码的代码，若 curl 失败或 HTTP 状态非 200 会即刻被判定失败退出
           HTTP_CODE=$(curl -sL -w "%{http_code}" -o response.txt "$WORKER_URL/api/init/${JWT_SECRET}")
           RESPONSE_BODY=$(cat response.txt)
           if [ "$RESPONSE_BODY" = "success" ]; then
