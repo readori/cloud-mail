@@ -1,4 +1,5 @@
-name: 🚀 Deploy cloud-mail v2
+name: 🚀 Deploy cloud-mail to Cloudflare Workers
+
 on:
   push:
     branches: [ main ]
@@ -12,10 +13,24 @@ on:
         required: false
         default: 'true'
 
+# 最小权限原则：默认只给 contents:read，删除运行记录那一步需要 actions:write，
+# 其余全部保持只读，即使 workflow 意外被谁触发，能造成的影响也降到最低
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   Deploy-cloud-mail:
     name: 🏗️ Build and Deploy
     runs-on: ubuntu-latest
+
+    # 双重保险：即便 push/workflow_dispatch 本身已经要求触发者对仓库有
+    # write 权限（GitHub 平台层面强制的），这里再显式校验一次仓库归属
+    # 和触发者身份。任何人 fork 这个仓库后，fork 里的 workflow 会因为
+    # github.repository 不匹配而直接跳过，不会消耗你的 Secrets/额度；
+    # 即便未来误加了某个协作者，也只有 github.actor 精确匹配的人才能
+    # 真正跑到部署这一步。记得把 'readori' 换成你自己的 GitHub 用户名。
+    if: github.repository == 'readori/cloud-mail' && github.actor == 'readori'
 
     env:
       NAME: ${{ secrets.NAME || vars.NAME || 'cloud-mail' }}
@@ -343,7 +358,11 @@ jobs:
           fi
 
       - name: 🗑️ 删除运行记录 / Delete workflow runs
-        uses: GitRML/delete-workflow-runs@main
+        # 关键修复：之前用的是 @main（分支引用，会随时变化），存在供应链风险——
+        # 如果这个第三方仓库的 main 分支被恶意篡改，你的 Secrets 会直接暴露给
+        # 攻击者控制的代码。这里改为固定到 v1.2.2 版本对应的完整 commit SHA，
+        # 行为不会再变化，除非你自己主动升级。
+        uses: GitRML/delete-workflow-runs@d2436ee2067dec300f9f53bf9e8c8725f3e14007 # v1.2.2
         continue-on-error: true
         with:
           retain_days: '1'
