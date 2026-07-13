@@ -106,58 +106,53 @@ jobs:
         run: |
           echo "📝 Generating wrangler-action.toml dynamically via Python..."
           python3 -c '
-          import os, json
+          import os
 
-          # 基础配置
+          # 核心修复：彻底废除内部冲突的双引号 f-string，换用单双引号交叉包裹，实现全版本 Python 通用兼容
           toml = [
-              f"name = \"{os.environ.get(\"NAME\")}\"",
+              "name = \"" + os.environ.get("NAME", "cloud-mail") + "\"",
               "main = \"src/index.js\"",
               "compatibility_date = \"2023-12-01\"",
               "",
               "[vars]",
-              f"ADMIN = \"{os.environ.get(\"ADMIN\", \"\")}\"",
-              f"JWT_SECRET = \"{os.environ.get(\"JWT_SECRET\", \"\")}\"",
-              f"DOMAIN = {os.environ.get(\"DOMAIN\", \"[]\")}",
-              f"AI_MODEL = \"{os.environ.get(\"AI_MODEL\", \"\")}\"",
-              f"ANALYSIS_CACHE = {os.environ.get(\"ANALYSIS_CACHE\", \"false\").lower()}",
-              ""
-          ]
-
-          # KV 和 D1 绑定
-          toml.extend([
+              "ADMIN = \"" + os.environ.get("ADMIN", "") + "\"",
+              "JWT_SECRET = \"" + os.environ.get("JWT_SECRET", "") + "\"",
+              "DOMAIN = " + os.environ.get("DOMAIN", "[]"),
+              "AI_MODEL = \"" + os.environ.get("AI_MODEL", "") + "\"",
+              "ANALYSIS_CACHE = " + os.environ.get("ANALYSIS_CACHE", "false").lower(),
+              "",
               "[[kv_namespaces]]",
               "binding = \"KV\"",
-              f"id = \"{os.environ.get(\"KV_ID\", \"\")}\"",
+              "id = \"" + os.environ.get("KV_ID", "") + "\"",
               "",
               "[[d1_databases]]",
               "binding = \"DB\"",
-              f"database_name = \"{os.environ.get(\"NAME\")}\"",
-              f"database_id = \"{os.environ.get(\"D1_ID\", \"\")}\"",
+              "database_name = \"" + os.environ.get("NAME", "cloud-mail") + "\"",
+              "database_id = \"" + os.environ.get("D1_ID", "") + "\"",
               ""
-          ])
+          ]
 
-          # 可选配置安全过滤（只有当变量真正存在且非空时才写入）
           custom_domain = os.environ.get("CUSTOM_DOMAIN")
           if custom_domain and custom_domain.strip():
-              toml.extend(["[[routes]]", f"pattern = \"{custom_domain}\"", "custom_domain = true", ""])
+              toml.extend(["[[routes]]", "pattern = \"" + custom_domain + "\"", "custom_domain = true", ""])
 
           r2_bucket = os.environ.get("R2_BUCKET_NAME")
           if r2_bucket and r2_bucket.strip():
-              toml.extend(["[[r2_buckets]]", "binding = \"R2\"", f"bucket_name = \"{r2_bucket}\"", ""])
+              toml.extend(["[[r2_buckets]]", "binding = \"R2\"", "bucket_name = \"" + r2_bucket + "\"", ""])
 
           proj_link = os.environ.get("PROJECT_LINK")
           if proj_link and proj_link.strip():
-              toml.extend(["[vars]", f"PROJECT_LINK = \"{proj_link}\"", ""])
+              toml.extend(["[vars]", "PROJECT_LINK = \"" + proj_link + "\"", ""])
 
           l_id = os.environ.get("LINUXDO_CLIENT_ID")
           l_sec = os.environ.get("LINUXDO_CLIENT_SECRET")
           if l_id and l_id.strip() and l_sec and l_sec.strip():
               toml.extend([
                   "[vars]",
-                  f"LINUXDO_CLIENT_ID = \"{l_id}\"",
-                  f"LINUXDO_CLIENT_SECRET = \"{l_sec}\"",
-                  f"LINUXDO_CALLBACK_URL = \"{os.environ.get(\"LINUXDO_CALLBACK_URL\", \"\")}\"",
-                  f"LINUXDO_SWITCH = {os.environ.get(\"LINUXDO_SWITCH\", \"false\").lower()}",
+                  "LINUXDO_CLIENT_ID = \"" + l_id + "\"",
+                  "LINUXDO_CLIENT_SECRET = \"" + l_sec + "\"",
+                  "LINUXDO_CALLBACK_URL = \"" + os.environ.get("LINUXDO_CALLBACK_URL", "") + "\"",
+                  "LINUXDO_SWITCH = " + os.environ.get("LINUXDO_SWITCH", "false").lower(),
                   ""
               ])
 
