@@ -1,0 +1,260 @@
+name: 🚀 Deploy cloud-mail to Cloudflare Workers
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "mail-worker/**"
+      - "mail-vue/**"
+  workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: '是否强制重新发布所有组件？(true/false)'
+        required: false
+        default: 'true'
+
+jobs:
+  Deploy-cloud-mail:
+    name: 🏗️ Build and Deploy
+    runs-on: ubuntu-latest
+
+    env:
+      NAME: ${{ secrets.NAME || vars.NAME || 'cloud-mail' }}
+      CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN || vars.CUSTOM_DOMAIN }}
+      DOMAIN: ${{ secrets.DOMAIN || vars.DOMAIN }}
+      ADMIN: ${{ secrets.ADMIN || vars.ADMIN }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET || vars.JWT_SECRET }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || vars.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID || vars.D1_DATABASE_ID }}
+      KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID || vars.KV_NAMESPACE_ID }}
+      R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME || vars.R2_BUCKET_NAME }}
+      PROJECT_LINK: ${{ secrets.PROJECT_LINK || vars.PROJECT_LINK }}
+      AI_MODEL: ${{ secrets.AI_MODEL || vars.AI_MODEL || '@cf/meta/llama-3.1-8b-instruct' }}
+      CLOUDFLARE_EMAIL: ${{ secrets.CF_EMAIL || vars.CF_EMAIL || false }}
+      ANALYSIS_CACHE: ${{ secrets.ANALYSIS_CACHE || vars.ANALYSIS_CACHE || false }}
+      LINUXDO_CLIENT_ID: ${{ secrets.LINUXDO_CLIENT_ID || vars.LINUXDO_CLIENT_ID }}
+      LINUXDO_CLIENT_SECRET: ${{ secrets.LINUXDO_CLIENT_SECRET || vars.LINUXDO_CLIENT_SECRET }}
+      LINUXDO_CALLBACK_URL: ${{ secrets.LINUXDO_CALLBACK_URL || vars.LINUXDO_CALLBACK_URL }}
+      LINUXDO_SWITCH: ${{ secrets.LINUXDO_SWITCH || vars.LINUXDO_SWITCH }}
+
+    outputs:
+      worker_url: ${{ steps.deploy.outputs.worker_url }}
+
+    steps:
+      - name: 🚚 检出代码仓库 / Checkout repository
+        uses: actions/checkout@v4
+
+      - name: ⚙ 设置 pnpm / Set up pnpm
+        uses: pnpm/action-setup@v4.1.0
+        with:
+          version: 9
+
+      - name: ⚙ 设置 Node.js / Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: "./mail-worker/pnpm-lock.yaml"
+
+      - name: 📦 安装依赖 / Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: ./mail-worker
+
+      - name: 📡 禁用 Wrangler 遥测 / Disable wrangler telemetry
+        working-directory: ./mail-worker
+        run: pnpm wrangler telemetry disable
+
+      - name: ⚡ 获取或创建 KV 数据库 / Get or create KV namespace
+        working-directory: ./mail-worker
+        id: kv_setup
+        run: |
+          set -euo pipefail
+
+          if [ -n "$KV_NAMESPACE_ID" ]; then
+            echo "kv_id=$KV_NAMESPACE_ID" >> "$GITHUB_OUTPUT"
+          else
+            echo "🔍 Checking KV namespace..."
+            KV_LIST=$(pnpm wrangler kv namespace list)
+            if echo "$KV_LIST" | jq -e ".[] | select(.title == \"$NAME\")" >/dev/null; then
+              KV_ID=$(echo "$KV_LIST" | jq -r ".[] | select(.title == \"$NAME\") | .id")
+            else
+              pnpm wrangler kv namespace create "$NAME"
+              KV_ID=$(pnpm wrangler kv namespace list | jq -r ".[] | select(.title == \"$NAME\") | .id")
+            fi
+
+            if [ -z "$KV_ID" ]; then
+              echo "❌ Failed to resolve KV namespace id."
+              exit 1
+            fi
+
+            echo "kv_id=$KV_ID" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 🐬 获取或创建 D1 数据库 / Get or create D1 database
+        working-directory: ./mail-worker
+        id: d1_setup
+        run: |
+          set -euo pipefail
+
+          if [ -n "$D1_DATABASE_ID" ]; then
+            echo "d1_id=$D1_DATABASE_ID" >> "$GITHUB_OUTPUT"
+          else
+            echo "🔍 Checking D1 database..."
+            DB_LIST=$(pnpm wrangler d1 list --json)
+            if echo "$DB_LIST" | jq -e ".[] | select(.name == \"$NAME\")" >/dev/null; then
+              D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"$NAME\") | .uuid")
+            else
+              pnpm wrangler d1 create "$NAME"
+              D1_ID=$(pnpm wrangler d1 list --json | jq -r ".[] | select(.name == \"$NAME\") | .uuid")
+            fi
+
+            if [ -z "$D1_ID" ]; then
+              echo "❌ Failed to resolve D1 database id."
+              exit 1
+            fi
+
+            echo "d1_id=$D1_ID" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 🛠️ 重新生成标准的 wrangler-action.toml / Generate config file
+        working-directory: ./mail-worker
+        run: |
+          set -euo pipefail
+          echo "📝 Generating wrangler-action.toml dynamically via Python..."
+          python3 -c '
+          import os
+
+          def env(key, default=""):
+              # 关键修复：统一 strip 首尾空白/换行，避免 Secret 里混入的
+              # 隐藏换行符/空格破坏生成出来的 TOML 字符串语法
+              return (os.environ.get(key) or default).strip()
+
+          def env_raw_bool(key, default="false"):
+              return env(key, default).lower()
+
+          name = env("NAME", "cloud-mail")
+
+          # 关键修复：[vars] 是 TOML 的一个表(table)，同一个表名只能出现一次，
+          # 不能像之前那样在多个 if 分支里各写一次 "[vars]"（会触发
+          # "trying to redefine an already defined table" 报错）。
+          # 这里改为先把所有要放进 [vars] 的键值对收集到一个有序列表里，
+          # 最后统一只输出一次 "[vars]" 表头。
+          vars_lines = [
+              "ADMIN = \"" + env("ADMIN") + "\"",
+              "JWT_SECRET = \"" + env("JWT_SECRET") + "\"",
+              "DOMAIN = " + env("DOMAIN", "[]"),
+              "AI_MODEL = \"" + env("AI_MODEL") + "\"",
+              "ANALYSIS_CACHE = " + env_raw_bool("ANALYSIS_CACHE"),
+          ]
+
+          proj_link = env("PROJECT_LINK")
+          if proj_link:
+              vars_lines.append("PROJECT_LINK = \"" + proj_link + "\"")
+
+          l_id = env("LINUXDO_CLIENT_ID")
+          l_sec = env("LINUXDO_CLIENT_SECRET")
+          if l_id and l_sec:
+              vars_lines.extend([
+                  "LINUXDO_CLIENT_ID = \"" + l_id + "\"",
+                  "LINUXDO_CLIENT_SECRET = \"" + l_sec + "\"",
+                  "LINUXDO_CALLBACK_URL = \"" + env("LINUXDO_CALLBACK_URL") + "\"",
+                  "LINUXDO_SWITCH = " + env_raw_bool("LINUXDO_SWITCH"),
+              ])
+
+          toml = [
+              "name = \"" + name + "\"",
+              "main = \"src/index.js\"",
+              "compatibility_date = \"2023-12-01\"",
+              "",
+              "[vars]",
+          ]
+          toml.extend(vars_lines)
+          toml.append("")
+
+          toml.extend([
+              "[[kv_namespaces]]",
+              "binding = \"KV\"",
+              "id = \"" + env("KV_ID") + "\"",
+              "",
+              "[[d1_databases]]",
+              "binding = \"DB\"",
+              "database_name = \"" + name + "\"",
+              "database_id = \"" + env("D1_ID") + "\"",
+              ""
+          ])
+
+          custom_domain = env("CUSTOM_DOMAIN")
+          if custom_domain:
+              toml.extend(["[[routes]]", "pattern = \"" + custom_domain + "\"", "custom_domain = true", ""])
+
+          r2_bucket = env("R2_BUCKET_NAME")
+          if r2_bucket:
+              toml.extend(["[[r2_buckets]]", "binding = \"R2\"", "bucket_name = \"" + r2_bucket + "\"", ""])
+
+          if env_raw_bool("CLOUDFLARE_EMAIL") == "true":
+              toml.extend(["[[send_email]]", "name = \"email\"", ""])
+
+          with open("wrangler-action.toml", "w", encoding="utf-8") as f:
+              f.write("\n".join(toml))
+
+          print("✅ wrangler-action.toml generated.")
+          '
+          echo "----- wrangler-action.toml -----"
+          cat wrangler-action.toml
+          echo "---------------------------------"
+        env:
+          KV_ID: ${{ steps.kv_setup.outputs.kv_id }}
+          D1_ID: ${{ steps.d1_setup.outputs.d1_id }}
+
+      - name: 🚀 开始部署 / Start deployment
+        id: deploy
+        working-directory: ./mail-worker
+        run: |
+          # 关键修复：开启 pipefail，避免 `wrangler deploy | tee` 这种管道
+          # 在 wrangler 报错退出时，因为 tee 本身返回 0 而被 shell 判定为"成功"
+          set -eo pipefail
+
+          echo "🚀 Starting deployment..."
+          if [ "${{ github.event.inputs.force_deploy }}" = "true" ]; then
+            echo "🔄 Force deploy requested. Running no-cache deployment..."
+            pnpm wrangler deploy -c wrangler-action.toml --no-bundle 2>&1 | tee deploy.log
+          else
+            pnpm wrangler deploy -c wrangler-action.toml 2>&1 | tee deploy.log
+          fi
+
+          WORKER_URL=$(grep -o "https://.*\.workers\.dev" deploy.log || echo "")
+          if [ -n "$WORKER_URL" ]; then
+            echo "::add-mask::$WORKER_URL"
+          fi
+          echo "worker_url=$WORKER_URL" >> "$GITHUB_OUTPUT"
+          echo "✅ Deployment completed successfully."
+
+      - name: ♻️ 初始化数据库 / Initialize database
+        run: |
+          set -euo pipefail
+
+          echo "🛠️ Starting database initialization..."
+          sleep 15
+          WORKER_URL="${CUSTOM_DOMAIN:+https://$CUSTOM_DOMAIN}"
+          WORKER_URL="${WORKER_URL:-${{ steps.deploy.outputs.worker_url }}}"
+          if [ -z "$WORKER_URL" ]; then
+            echo "❌ Preview URL not available. Please set CUSTOM_DOMAIN."
+            exit 1
+          fi
+
+          HTTP_CODE=$(curl -sL -w "%{http_code}" -o response.txt "$WORKER_URL/api/init/${JWT_SECRET}")
+          RESPONSE_BODY=$(cat response.txt)
+          if [ "$RESPONSE_BODY" = "success" ]; then
+            echo "✅ Setup completed."
+          else
+            echo "❌ Failed. HTTP: $HTTP_CODE, Response: $RESPONSE_BODY"
+            exit 1
+          fi
+
+      - name: 🗑️ 删除运行记录 / Delete workflow runs
+        uses: GitRML/delete-workflow-runs@main
+        continue-on-error: true
+        with:
+          retain_days: '1'
+          keep_minimum_runs: '0'
