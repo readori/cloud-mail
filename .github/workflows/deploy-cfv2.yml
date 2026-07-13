@@ -1,4 +1,4 @@
-name: 🚀 Deploy cloud-mail to Cloudflare Workers
+name: 🚀 Deploy cloud-mail v2
 
 on:
   push:
