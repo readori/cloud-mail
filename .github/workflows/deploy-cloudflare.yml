@@ -73,11 +73,7 @@ jobs:
             echo "kv_id=$KV_NAMESPACE_ID" >> $GITHUB_OUTPUT
           else
             echo "🔍 Checking KV namespace..."
-            set +e
-            KV_LIST=$(pnpm wrangler kv namespace list 2>&1)
-            STATUS=$?
-            set -e
-            if [ $STATUS -ne 0 ]; then echo "$KV_LIST"; exit 1; fi
+            KV_LIST=$(pnpm wrangler kv namespace list)
             
             if echo "$KV_LIST" | jq -e ".[] | select(.title == \"$NAME\")" >/dev/null; then
               KV_ID=$(echo "$KV_LIST" | jq -r ".[] | select(.title == \"$NAME\") | .id")
@@ -96,11 +92,7 @@ jobs:
             echo "d1_id=$D1_DATABASE_ID" >> $GITHUB_OUTPUT
           else
             echo "🔍 Checking D1 database..."
-            set +e
-            DB_LIST=$(pnpm wrangler d1 list --json 2>&1)
-            STATUS=$?
-            set -e
-            if [ $STATUS -ne 0 ]; then echo "$DB_LIST"; exit 1; fi
+            DB_LIST=$(pnpm wrangler d1 list --json)
             
             if echo "$DB_LIST" | jq -e ".[] | select(.name == \"$NAME\")" >/dev/null; then
               D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"$NAME\") | .uuid")
@@ -116,7 +108,6 @@ jobs:
         run: |
           echo "📝 Generating wrangler-action.toml dynamically..."
           
-          # 安全过滤，确保即便环境变量为空，注入 TOML 的也是有效的双引号
           SAFE_R2="${R2_BUCKET_NAME:-}"
           SAFE_LINK="${PROJECT_LINK:-}"
           SAFE_L_ID="${LINUXDO_CLIENT_ID:-}"
@@ -183,31 +174,21 @@ jobs:
         working-directory: ./mail-worker
         run: |
           echo "🚀 Starting deployment..."
-          set +e
+          
+          # 移除了所有隐式忽略错误的管线控制，Wrangler 旦凡出错直接向 GitHub 抛出非0状态码
           if [ "${{ github.event.inputs.force_deploy }}" = "true" ]; then
             echo "🔄 Force deploy requested. Running no-cache deployment..."
-            pnpm wrangler deploy -c wrangler-action.toml --no-bundle 2>&1 | tee deploy.log
-            DEPLOY_STATUS=$?
+            pnpm wrangler deploy -c wrangler-action.toml --no-bundle | tee deploy.log
           else
-            pnpm wrangler deploy -c wrangler-action.toml 2>&1 | tee deploy.log
-            DEPLOY_STATUS=$?
+            pnpm wrangler deploy -c wrangler-action.toml | tee deploy.log
           fi
-          set -e
-          
-          if [ $DEPLOY_STATUS -ne 0 ]; then
-            echo "❌ Wrangler deployment failed. Logs:"
-            cat deploy.log
-            exit 1
-          fi
-          
-          cat deploy.log | grep -v "https://.*\.workers\.dev" || true
           
           WORKER_URL=$(grep -o "https://.*\.workers\.dev" deploy.log || echo "")
           if [ -n "$WORKER_URL" ]; then
             echo "::add-mask::$WORKER_URL"
           fi
           echo "worker_url=$WORKER_URL" >> $GITHUB_OUTPUT
-          echo "✅ Deployment step finished."
+          echo "✅ Deployment completed successfully."
 
       - name: ♻️ 初始化数据库 / Initialize database
         run: |
@@ -219,6 +200,8 @@ jobs:
             echo "❌ Preview URL not available. Please set CUSTOM_DOMAIN."
             exit 1
           fi
+          
+          # 移除了屏蔽状态码的代码，若 curl 失败或 HTTP 状态非 200 会即刻被判定失败退出
           HTTP_CODE=$(curl -sL -w "%{http_code}" -o response.txt "$WORKER_URL/api/init/${JWT_SECRET}")
           RESPONSE_BODY=$(cat response.txt)
           if [ "$RESPONSE_BODY" = "success" ]; then
