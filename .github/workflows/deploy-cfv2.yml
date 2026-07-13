@@ -1,4 +1,4 @@
-name: 🚀 Deploy cloud-mail v2
+name: 🚀 Deploy cloud-mail to Cloudflare Workers
 
 on:
   push:
@@ -37,6 +37,12 @@ jobs:
       LINUXDO_CLIENT_SECRET: ${{ secrets.LINUXDO_CLIENT_SECRET || vars.LINUXDO_CLIENT_SECRET }}
       LINUXDO_CALLBACK_URL: ${{ secrets.LINUXDO_CALLBACK_URL || vars.LINUXDO_CALLBACK_URL }}
       LINUXDO_SWITCH: ${{ secrets.LINUXDO_SWITCH || vars.LINUXDO_SWITCH }}
+      # 以下为新补充的可选配置，均有合理默认值，一般不需要单独设置：
+      ORM_LOG: ${{ secrets.ORM_LOG || vars.ORM_LOG || false }}
+      COMPATIBILITY_DATE: ${{ secrets.COMPATIBILITY_DATE || vars.COMPATIBILITY_DATE || '2025-06-04' }}
+      OBSERVABILITY_ENABLED: ${{ secrets.OBSERVABILITY_ENABLED || vars.OBSERVABILITY_ENABLED || 'true' }}
+      # 多个 cron 用英文逗号分隔，例如 "0 16 * * *,*/30 * * * *"
+      CRON_SCHEDULE: ${{ secrets.CRON_SCHEDULE || vars.CRON_SCHEDULE || '0 16 * * *' }}
 
     outputs:
       worker_url: ${{ steps.deploy.outputs.worker_url }}
@@ -135,50 +141,89 @@ jobs:
 
           name = env("NAME", "cloud-mail")
 
-          # 关键修复：[vars] 是 TOML 的一个表(table)，同一个表名只能出现一次，
-          # 不能像之前那样在多个 if 分支里各写一次 "[vars]"（会触发
-          # "trying to redefine an already defined table" 报错）。
-          # 这里改为先把所有要放进 [vars] 的键值对收集到一个有序列表里，
-          # 最后统一只输出一次 "[vars]" 表头。
+          # 关键修复：以下绑定名(binding)和 [vars] 键名之前全部错误地用了
+          # 大写(ADMIN/JWT_SECRET/DOMAIN/KV/DB/R2 等)。经过下载并全文检索
+          # 项目源码(mail-worker/src)确认，代码里全部是小写读取，例如：
+          #   c.env.admin / c.env.jwt_secret / c.env.domain
+          #   c.env.ai_model / c.env.analysis_cache / c.env.orm_log
+          #   c.env.kv / c.env.db / c.env.r2 / c.env.email(send_email绑定)
+          #   c.env.project_link / c.env.linuxdo_client_id 等
+          # 大写版本在代码里零匹配。之前哪怕部署"成功"，程序实际也读不到
+          # 任何配置(admin/jwt_secret/kv/db 全部是 undefined)。这里统一
+          # 改成小写，和官方 wrangler.toml 模板保持一致。
+          #
+          # [vars] 是 TOML 的一个表(table)，同一个表名只能出现一次，这里
+          # 统一收集到 vars_lines 里最后只输出一次 "[vars]" 表头，避免
+          # "trying to redefine an already defined table" 报错。
           vars_lines = [
-              "ADMIN = \"" + env("ADMIN") + "\"",
-              "JWT_SECRET = \"" + env("JWT_SECRET") + "\"",
-              "DOMAIN = " + env("DOMAIN", "[]"),
-              "AI_MODEL = \"" + env("AI_MODEL") + "\"",
-              "ANALYSIS_CACHE = " + env_raw_bool("ANALYSIS_CACHE"),
+              "admin = \"" + env("ADMIN") + "\"",
+              "jwt_secret = \"" + env("JWT_SECRET") + "\"",
+              "domain = " + env("DOMAIN", "[]"),
+              "ai_model = \"" + env("AI_MODEL") + "\"",
+              "analysis_cache = " + env_raw_bool("ANALYSIS_CACHE"),
           ]
+
+          # orm_log：是否打印 SQL 日志，官方模板默认注释掉(即 false)，
+          # 通过 Secret/Variable ORM_LOG 可选开启
+          orm_log = env("ORM_LOG")
+          if orm_log:
+              vars_lines.append("orm_log = " + env_raw_bool("ORM_LOG"))
 
           proj_link = env("PROJECT_LINK")
           if proj_link:
-              vars_lines.append("PROJECT_LINK = \"" + proj_link + "\"")
+              vars_lines.append("project_link = \"" + proj_link + "\"")
 
           l_id = env("LINUXDO_CLIENT_ID")
           l_sec = env("LINUXDO_CLIENT_SECRET")
           if l_id and l_sec:
               vars_lines.extend([
-                  "LINUXDO_CLIENT_ID = \"" + l_id + "\"",
-                  "LINUXDO_CLIENT_SECRET = \"" + l_sec + "\"",
-                  "LINUXDO_CALLBACK_URL = \"" + env("LINUXDO_CALLBACK_URL") + "\"",
-                  "LINUXDO_SWITCH = " + env_raw_bool("LINUXDO_SWITCH"),
+                  "linuxdo_client_id = \"" + l_id + "\"",
+                  "linuxdo_client_secret = \"" + l_sec + "\"",
+                  "linuxdo_callback_url = \"" + env("LINUXDO_CALLBACK_URL") + "\"",
+                  "linuxdo_switch = " + env_raw_bool("LINUXDO_SWITCH"),
               ])
+
+          # compatibility_date：官方模板当前使用 "2025-06-04"，可通过
+          # Secret/Variable COMPATIBILITY_DATE 覆盖
+          compat_date = env("COMPATIBILITY_DATE", "2025-06-04")
 
           toml = [
               "name = \"" + name + "\"",
               "main = \"src/index.js\"",
-              "compatibility_date = \"2023-12-01\"",
+              "compatibility_date = \"" + compat_date + "\"",
+              # keep_vars = true：官方模板自带，避免 wrangler 在部署时清空
+              # 未在本地配置中出现、但远程已存在的 vars(双重保险)
+              "keep_vars = true",
               "",
-              "[vars]",
           ]
+
+          # [observability]：官方模板默认开启，可通过 Secret/Variable
+          # OBSERVABILITY_ENABLED 覆盖(默认 true)
+          observability_enabled = env("OBSERVABILITY_ENABLED", "true")
+          toml.extend([
+              "[observability]",
+              "enabled = " + observability_enabled.lower(),
+              "",
+          ])
+
+          # [ai]：Workers AI 绑定，代码里用于识别验证码等功能，官方模板固定要求
+          toml.extend([
+              "[ai]",
+              "binding = \"ai\"",
+              "",
+          ])
+
+          toml.append("[vars]")
           toml.extend(vars_lines)
           toml.append("")
 
           toml.extend([
               "[[kv_namespaces]]",
-              "binding = \"KV\"",
+              "binding = \"kv\"",
               "id = \"" + env("KV_ID") + "\"",
               "",
               "[[d1_databases]]",
-              "binding = \"DB\"",
+              "binding = \"db\"",
               "database_name = \"" + name + "\"",
               "database_id = \"" + env("D1_ID") + "\"",
               ""
@@ -190,10 +235,39 @@ jobs:
 
           r2_bucket = env("R2_BUCKET_NAME")
           if r2_bucket:
-              toml.extend(["[[r2_buckets]]", "binding = \"R2\"", "bucket_name = \"" + r2_bucket + "\"", ""])
+              toml.extend(["[[r2_buckets]]", "binding = \"r2\"", "bucket_name = \"" + r2_bucket + "\"", ""])
 
           if env_raw_bool("CLOUDFLARE_EMAIL") == "true":
               toml.extend(["[[send_email]]", "name = \"email\"", ""])
+
+          # [assets]：静态前端资源绑定，官方模板固定要求，缺失会导致
+          # index.js 里 `env.assets.fetch(req)` 报错(网站首页无法访问)
+          toml.extend([
+              "[assets]",
+              "binding = \"assets\"",
+              "directory = \"./dist\"",
+              "not_found_handling = \"single-page-application\"",
+              "run_worker_first = true",
+              "",
+          ])
+
+          # [triggers]：定时任务。官方默认每天执行一次(每日重置/清理任务)。
+          # 之前生成的 toml 完全没有这个块，导致每次部署都会把 Dashboard
+          # 上已配置的 cron 触发器覆盖删除。这里通过 Secret/Variable
+          # CRON_SCHEDULE 可自定义，支持逗号分隔多个 cron 表达式；
+          # 默认沿用官方模板的 "0 16 * * *"(注意 index.js 里 scheduled()
+          # 还专门判断了 "*/30 * * * *" 用于刷新图表缓存，如果你的账号
+          # 也需要这个每 30 分钟的任务，记得把 CRON_SCHEDULE 设置为
+          # "0 16 * * *,*/30 * * * *")
+          cron_schedule = env("CRON_SCHEDULE", "0 16 * * *")
+          cron_list = [c.strip() for c in cron_schedule.split(",") if c.strip()]
+          if cron_list:
+              cron_toml_array = "[" + ", ".join("\"" + c + "\"" for c in cron_list) + "]"
+              toml.extend([
+                  "[triggers]",
+                  "crons = " + cron_toml_array,
+                  "",
+              ])
 
           with open("wrangler-action.toml", "w", encoding="utf-8") as f:
               f.write("\n".join(toml))
@@ -216,12 +290,17 @@ jobs:
           set -eo pipefail
 
           echo "🚀 Starting deployment..."
+          # 关键修复：这个项目源码里的 import 全部省略了文件扩展名
+          # （例如 `import app from './hono/webs'`），这种写法依赖
+          # esbuild 打包时自动解析。--no-bundle 会跳过打包，把源码当作
+          # 严格 ES Module 直接部署，而严格 ESM 要求相对导入必须带精确
+          # 扩展名，因此会报 "No such module" 错误。--no-bundle 在这里
+          # 是用错了参数（它切换的是部署模式，不是"清缓存"），所以统一
+          # 走正常的打包部署，不再区分 force_deploy。
           if [ "${{ github.event.inputs.force_deploy }}" = "true" ]; then
-            echo "🔄 Force deploy requested. Running no-cache deployment..."
-            pnpm wrangler deploy -c wrangler-action.toml --no-bundle 2>&1 | tee deploy.log
-          else
-            pnpm wrangler deploy -c wrangler-action.toml 2>&1 | tee deploy.log
+            echo "🔄 Force deploy requested."
           fi
+          pnpm wrangler deploy -c wrangler-action.toml 2>&1 | tee deploy.log
 
           WORKER_URL=$(grep -o "https://.*\.workers\.dev" deploy.log || echo "")
           if [ -n "$WORKER_URL" ]; then
