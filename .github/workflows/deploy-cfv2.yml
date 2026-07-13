@@ -1,5 +1,4 @@
-name: 🚀 Deploy cloud-mail to Cloudflare Workers
-
+name: 🚀 Deploy cloud-mail v2
 on:
   push:
     branches: [ main ]
@@ -268,6 +267,18 @@ jobs:
                   "crons = " + cron_toml_array,
                   "",
               ])
+
+          # [build]：关键修复！assets.directory 指向的 "./dist" 目录并不会
+          # 自己存在，它是靠这条 build 命令在部署前自动构建 mail-vue 前端
+          # 项目生成出来的(mail-vue/.env.release 里配置了
+          # VITE_OUT_DIR=../mail-worker/dist，构建产物会直接输出到这里)。
+          # 之前生成的 toml 完全没有这一段，导致 wrangler 校验时发现
+          # "./dist" 目录不存在直接报错退出。这里对齐官方模板补回。
+          toml.extend([
+              "[build]",
+              "command = \"pnpm --prefix ../mail-vue install && pnpm --prefix ../mail-vue run build\"",
+              "",
+          ])
 
           with open("wrangler-action.toml", "w", encoding="utf-8") as f:
               f.write("\n".join(toml))
