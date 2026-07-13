@@ -69,99 +69,130 @@ jobs:
         working-directory: ./mail-worker
         id: kv_setup
         run: |
+          set -euo pipefail
+
           if [ -n "$KV_NAMESPACE_ID" ]; then
-            echo "kv_id=$KV_NAMESPACE_ID" >> $GITHUB_OUTPUT
+            echo "kv_id=$KV_NAMESPACE_ID" >> "$GITHUB_OUTPUT"
           else
             echo "🔍 Checking KV namespace..."
             KV_LIST=$(pnpm wrangler kv namespace list)
             if echo "$KV_LIST" | jq -e ".[] | select(.title == \"$NAME\")" >/dev/null; then
               KV_ID=$(echo "$KV_LIST" | jq -r ".[] | select(.title == \"$NAME\") | .id")
             else
-              pnpm wrangler kv namespace create $NAME
+              pnpm wrangler kv namespace create "$NAME"
               KV_ID=$(pnpm wrangler kv namespace list | jq -r ".[] | select(.title == \"$NAME\") | .id")
             fi
-            echo "kv_id=$KV_ID" >> $GITHUB_OUTPUT
+
+            if [ -z "$KV_ID" ]; then
+              echo "❌ Failed to resolve KV namespace id."
+              exit 1
+            fi
+
+            echo "kv_id=$KV_ID" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 🐬 获取或创建 D1 数据库 / Get or create D1 database
         working-directory: ./mail-worker
         id: d1_setup
         run: |
+          set -euo pipefail
+
           if [ -n "$D1_DATABASE_ID" ]; then
-            echo "d1_id=$D1_DATABASE_ID" >> $GITHUB_OUTPUT
+            echo "d1_id=$D1_DATABASE_ID" >> "$GITHUB_OUTPUT"
           else
             echo "🔍 Checking D1 database..."
             DB_LIST=$(pnpm wrangler d1 list --json)
             if echo "$DB_LIST" | jq -e ".[] | select(.name == \"$NAME\")" >/dev/null; then
               D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"$NAME\") | .uuid")
             else
-              pnpm wrangler d1 create $NAME
+              pnpm wrangler d1 create "$NAME"
               D1_ID=$(pnpm wrangler d1 list --json | jq -r ".[] | select(.name == \"$NAME\") | .uuid")
             fi
-            echo "d1_id=$D1_ID" >> $GITHUB_OUTPUT
+
+            if [ -z "$D1_ID" ]; then
+              echo "❌ Failed to resolve D1 database id."
+              exit 1
+            fi
+
+            echo "d1_id=$D1_ID" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 🛠️ 重新生成标准的 wrangler-action.toml / Generate config file
         working-directory: ./mail-worker
         run: |
+          set -euo pipefail
           echo "📝 Generating wrangler-action.toml dynamically via Python..."
           python3 -c '
           import os
 
-          # 核心修复：彻底废除内部冲突的双引号 f-string，换用单双引号交叉包裹，实现全版本 Python 通用兼容
+          def env(key, default=""):
+              # 关键修复：统一 strip 首尾空白/换行，避免 Secret 里混入的
+              # 隐藏换行符/空格破坏生成出来的 TOML 字符串语法
+              return (os.environ.get(key) or default).strip()
+
+          def env_raw_bool(key, default="false"):
+              return env(key, default).lower()
+
+          name = env("NAME", "cloud-mail")
+
           toml = [
-              "name = \"" + os.environ.get("NAME", "cloud-mail") + "\"",
+              "name = \"" + name + "\"",
               "main = \"src/index.js\"",
               "compatibility_date = \"2023-12-01\"",
               "",
               "[vars]",
-              "ADMIN = \"" + os.environ.get("ADMIN", "") + "\"",
-              "JWT_SECRET = \"" + os.environ.get("JWT_SECRET", "") + "\"",
-              "DOMAIN = " + os.environ.get("DOMAIN", "[]"),
-              "AI_MODEL = \"" + os.environ.get("AI_MODEL", "") + "\"",
-              "ANALYSIS_CACHE = " + os.environ.get("ANALYSIS_CACHE", "false").lower(),
+              "ADMIN = \"" + env("ADMIN") + "\"",
+              "JWT_SECRET = \"" + env("JWT_SECRET") + "\"",
+              "DOMAIN = " + env("DOMAIN", "[]"),
+              "AI_MODEL = \"" + env("AI_MODEL") + "\"",
+              "ANALYSIS_CACHE = " + env_raw_bool("ANALYSIS_CACHE"),
               "",
               "[[kv_namespaces]]",
               "binding = \"KV\"",
-              "id = \"" + os.environ.get("KV_ID", "") + "\"",
+              "id = \"" + env("KV_ID") + "\"",
               "",
               "[[d1_databases]]",
               "binding = \"DB\"",
-              "database_name = \"" + os.environ.get("NAME", "cloud-mail") + "\"",
-              "database_id = \"" + os.environ.get("D1_ID", "") + "\"",
+              "database_name = \"" + name + "\"",
+              "database_id = \"" + env("D1_ID") + "\"",
               ""
           ]
 
-          custom_domain = os.environ.get("CUSTOM_DOMAIN")
-          if custom_domain and custom_domain.strip():
+          custom_domain = env("CUSTOM_DOMAIN")
+          if custom_domain:
               toml.extend(["[[routes]]", "pattern = \"" + custom_domain + "\"", "custom_domain = true", ""])
 
-          r2_bucket = os.environ.get("R2_BUCKET_NAME")
-          if r2_bucket and r2_bucket.strip():
+          r2_bucket = env("R2_BUCKET_NAME")
+          if r2_bucket:
               toml.extend(["[[r2_buckets]]", "binding = \"R2\"", "bucket_name = \"" + r2_bucket + "\"", ""])
 
-          proj_link = os.environ.get("PROJECT_LINK")
-          if proj_link and proj_link.strip():
+          proj_link = env("PROJECT_LINK")
+          if proj_link:
               toml.extend(["[vars]", "PROJECT_LINK = \"" + proj_link + "\"", ""])
 
-          l_id = os.environ.get("LINUXDO_CLIENT_ID")
-          l_sec = os.environ.get("LINUXDO_CLIENT_SECRET")
-          if l_id and l_id.strip() and l_sec and l_sec.strip():
+          l_id = env("LINUXDO_CLIENT_ID")
+          l_sec = env("LINUXDO_CLIENT_SECRET")
+          if l_id and l_sec:
               toml.extend([
                   "[vars]",
                   "LINUXDO_CLIENT_ID = \"" + l_id + "\"",
                   "LINUXDO_CLIENT_SECRET = \"" + l_sec + "\"",
-                  "LINUXDO_CALLBACK_URL = \"" + os.environ.get("LINUXDO_CALLBACK_URL", "") + "\"",
-                  "LINUXDO_SWITCH = " + os.environ.get("LINUXDO_SWITCH", "false").lower(),
+                  "LINUXDO_CALLBACK_URL = \"" + env("LINUXDO_CALLBACK_URL") + "\"",
+                  "LINUXDO_SWITCH = " + env_raw_bool("LINUXDO_SWITCH"),
                   ""
               ])
 
-          if os.environ.get("CLOUDFLARE_EMAIL", "").lower() == "true":
+          if env_raw_bool("CLOUDFLARE_EMAIL") == "true":
               toml.extend(["[[send_email]]", "name = \"email\"", ""])
 
           with open("wrangler-action.toml", "w", encoding="utf-8") as f:
               f.write("\n".join(toml))
+
+          print("✅ wrangler-action.toml generated.")
           '
+          echo "----- wrangler-action.toml -----"
+          cat wrangler-action.toml
+          echo "---------------------------------"
         env:
           KV_ID: ${{ steps.kv_setup.outputs.kv_id }}
           D1_ID: ${{ steps.d1_setup.outputs.d1_id }}
@@ -170,23 +201,29 @@ jobs:
         id: deploy
         working-directory: ./mail-worker
         run: |
+          # 关键修复：开启 pipefail，避免 `wrangler deploy | tee` 这种管道
+          # 在 wrangler 报错退出时，因为 tee 本身返回 0 而被 shell 判定为"成功"
+          set -eo pipefail
+
           echo "🚀 Starting deployment..."
           if [ "${{ github.event.inputs.force_deploy }}" = "true" ]; then
             echo "🔄 Force deploy requested. Running no-cache deployment..."
-            pnpm wrangler deploy -c wrangler-action.toml --no-bundle | tee deploy.log
+            pnpm wrangler deploy -c wrangler-action.toml --no-bundle 2>&1 | tee deploy.log
           else
-            pnpm wrangler deploy -c wrangler-action.toml | tee deploy.log
+            pnpm wrangler deploy -c wrangler-action.toml 2>&1 | tee deploy.log
           fi
-          
+
           WORKER_URL=$(grep -o "https://.*\.workers\.dev" deploy.log || echo "")
           if [ -n "$WORKER_URL" ]; then
             echo "::add-mask::$WORKER_URL"
           fi
-          echo "worker_url=$WORKER_URL" >> $GITHUB_OUTPUT
+          echo "worker_url=$WORKER_URL" >> "$GITHUB_OUTPUT"
           echo "✅ Deployment completed successfully."
 
       - name: ♻️ 初始化数据库 / Initialize database
         run: |
+          set -euo pipefail
+
           echo "🛠️ Starting database initialization..."
           sleep 15
           WORKER_URL="${CUSTOM_DOMAIN:+https://$CUSTOM_DOMAIN}"
@@ -195,7 +232,7 @@ jobs:
             echo "❌ Preview URL not available. Please set CUSTOM_DOMAIN."
             exit 1
           fi
-          
+
           HTTP_CODE=$(curl -sL -w "%{http_code}" -o response.txt "$WORKER_URL/api/init/${JWT_SECRET}")
           RESPONSE_BODY=$(cat response.txt)
           if [ "$RESPONSE_BODY" = "success" ]; then
