@@ -1,20 +1,37 @@
-The MIT License (MIT)
+# iOS UI Phase 2 — Production Polish
 
-Copyright (c) 2025 eoao
+This pass upgrades the existing iOS UI architecture without changing the provider-neutral mail core.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
+## Implemented
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+- Expanded design system tokens, card styles, reusable section headers, icon badges, FAB, toast, empty state, and haptics.
+- Updated the default theme to a branded violet → cobalt → cyan visual language with refined dark surfaces.
+- Reworked the main tab bar to Mail / Contacts / Drafts / Settings.
+- Added a privacy-first Contacts tab that merges local correspondents with optional iOS Contacts and can launch Compose with the recipient pre-filled.
+- Upgraded Inbox with an overview card, richer mail cards, modern filter chips, floating compose action, refined swipe actions, empty/offline states, and snooze toast.
+- Rebuilt mail detail presentation with sender/subject hierarchy, privacy banner, attachment cards, sticky reply/reply-all/forward actions, and haptics.
+- Upgraded Composer with recipient chips, card-based addressing, compact visible attachment/link/schedule toolbar, gradient Send control, draft state messaging, and polished send feedback.
+- Rebuilt Drafts / Scheduled Send visual hierarchy with search, summary card, status cards, swipe actions, and FAB.
+- Upgraded Settings with an account hero, actionable Bento grid, connected-account entry, section headers, live theme preview, and refined visual hierarchy.
+- Reworked Server Health into a status dashboard with server hero, latency/sync/capability cards, detailed connection test steps, quota, and diagnostics.
+- Rebuilt legacy CloudMail Server Setup with modern self-hosted onboarding visuals and clearer security messaging.
+- Reworked CloudMail Login with branded hero, card-based credentials, server selector, validation states, and haptic feedback.
+- Reworked Add Account credentials / IMAP / SMTP advanced configuration into production-style cards while preserving provider preset and discovery logic.
+- Added a branded bootstrap/loading state.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+## Validation performed in this environment
+
+- All Swift sources pass `swiftc -frontend -parse`.
+- Package manifest parses.
+- Info.plist and Xcode project parse.
+- Xcode PBX source references remain aligned with all Swift files.
+- Existing provider-neutral and static QA guardrails reached/pass the iOS checks available before macOS-only build validation.
+
+## Still requires macOS / Xcode
+
+- Full Xcode typecheck/build (SwiftUI/UIKit SDK unavailable in this Linux environment).
+- iPhone Simulator visual review across supported device sizes.
+- iPad split-view visual review.
+- Real IMAP/SMTP/CloudMail connection testing.
+- VoiceOver / Dynamic Type manual pass.
+- Archive/TestFlight/App Store validation.
