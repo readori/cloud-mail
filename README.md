@@ -35,7 +35,8 @@
 > - **Enhanced Cloud Mail Backend: Improvements to Email APIs, CC/BCC, notifications, and security.
 
 > - **New Feature: Added support for the CF Mail iOS client.
-> - **[Deployment Guide](https://cfmail.readori.com/cloudmail-cloudflare-deploy-guide)<br>
+> - 
+> - **- [CloudMail Deployment Guide](https://cfmail.readori.com/cloudmail-cloudflare-deploy-guide)<br>
 
 ## Description
 With only one domain, you can create multiple different email addresses, similar to major email platforms. This project can be deployed on Cloudflare Workers to reduce server costs and build your own email service.
@@ -43,8 +44,9 @@ With only one domain, you can create multiple different email addresses, similar
 ## Project Showcase
 
 - [Live Demo](https://skymail.ink)<br>
+- [CloudMail Deployment Guide](https://cfmail.readori.com/cloudmail-cloudflare-deploy-guide)<br>
 - [Deployment Guide](https://doc.skymail.ink/en/)<br>
-- [Deployment Guide](https://cfmail.readori.com/cloudmail-cloudflare-deploy-guide)<br>
+
 
 
 | ![](/doc/demo/demo1.png) | ![](/doc/demo/demo2.png) |
