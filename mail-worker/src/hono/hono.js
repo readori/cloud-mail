@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import result from '../model/result';
 import { authSessionHeaders } from '../security/auth-session';
+import { localizeErrorMessage } from '../i18n/error-message.js';
 
 const app = new Hono();
 const ALLOW_HEADERS = `Authorization, Content-Type, Accept-Language, X-Init-Secret, ${authSessionHeaders.web}, ${authSessionHeaders.csrf}, Svix-Id, Svix-Timestamp, Svix-Signature`;
@@ -8,11 +9,11 @@ const ALLOW_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
 
 const CONTENT_SECURITY_POLICY = [
 	"default-src 'self'",
-	"script-src 'self' https://challenges.cloudflare.com",
+	"script-src 'self' https://challenges.cloudflare.com 'sha256-9akFwN7T458ofhT9Ict5/2wwvSE9wFPMwRoVnR27QDc='",
 	"style-src 'self' 'unsafe-inline'",
 	"font-src 'self' data:",
 	"img-src 'self' data: blob: https:",
-	"connect-src 'self' https://challenges.cloudflare.com",
+	"connect-src 'self' https://challenges.cloudflare.com https://api.iconify.design https://api.unisvg.com https://api.simplesvg.com",
 	"frame-src https://challenges.cloudflare.com",
 	"object-src 'none'",
 	"base-uri 'none'",
@@ -48,7 +49,7 @@ app.use('*', async (c, next) => {
 	c.header('Content-Security-Policy', CONTENT_SECURITY_POLICY);
 
 	const contentLength = Number(c.req.header('Content-Length') || 0);
-	if (Number.isFinite(contentLength) && contentLength > 40 * 1024 * 1024) return c.json(result.fail('请求体不能超过40MB', 413), 413);
+	if (Number.isFinite(contentLength) && contentLength > 40 * 1024 * 1024) return c.json(result.fail(localizeErrorMessage(c, '请求体不能超过40MB', 413), 413), 413);
 
 	const origin = resolveCorsOrigin(c);
 	if (origin) {
@@ -67,23 +68,28 @@ app.use('*', async (c, next) => {
 	await next();
 });
 
+function languageSafeInternalError(c, requestId) {
+	const base = localizeErrorMessage(c, '服务器内部错误 Internal server error', 500);
+	return `${base} (${requestId})`;
+}
+
 app.onError((err, c) => {
 	const requestId = c.get('requestId') || 'unknown';
 	if (err?.name === 'BizError') {
 		console.warn(`[${requestId}] ${err.message}`);
-		return c.json(result.fail(err.message, err.code));
+		return c.json(result.fail(localizeErrorMessage(c, err.message, err.code), err.code), err.code);
 	}
 
 	console.error(`[${requestId}]`, err);
-	if (err instanceof SyntaxError) return c.json(result.fail('请求JSON格式错误', 400), 400);
+	if (err instanceof SyntaxError) return c.json(result.fail(localizeErrorMessage(c, '请求JSON格式错误', 400), 400), 400);
 	const message = String(err?.message || '');
 	if (message.includes("reading 'get'") || message.includes("reading 'put'")) {
-		return c.json(result.fail('KV数据库未绑定 KV database not bound', 502));
+		return c.json(result.fail(localizeErrorMessage(c, 'KV数据库未绑定 KV database not bound', 502), 502), 502);
 	}
 	if (message.includes("reading 'prepare'")) {
-		return c.json(result.fail('D1数据库未绑定 D1 database not bound', 502));
+		return c.json(result.fail(localizeErrorMessage(c, 'D1数据库未绑定 D1 database not bound', 502), 502), 502);
 	}
-	return c.json(result.fail(`服务器内部错误 Internal server error (${requestId})`, 500), 500);
+	return c.json(result.fail(languageSafeInternalError(c, requestId), 500), 500);
 });
 
 export default app;

@@ -46,6 +46,7 @@ jobs:
       ANALYSIS_CACHE: ${{ secrets.ANALYSIS_CACHE || vars.ANALYSIS_CACHE || 'false' }}
       PASSWORD_PBKDF2_ITERATIONS: ${{ secrets.PASSWORD_PBKDF2_ITERATIONS || vars.PASSWORD_PBKDF2_ITERATIONS || '150000' }}
       PASSWORD_REHASH_ON_LOGIN: ${{ secrets.PASSWORD_REHASH_ON_LOGIN || vars.PASSWORD_REHASH_ON_LOGIN || 'true' }}
+      EMAIL_TRASH_RETENTION_DAYS: ${{ secrets.EMAIL_TRASH_RETENTION_DAYS || vars.EMAIL_TRASH_RETENTION_DAYS || '30' }}
       LINUXDO_CLIENT_ID: ${{ secrets.LINUXDO_CLIENT_ID || vars.LINUXDO_CLIENT_ID }}
       LINUXDO_CLIENT_SECRET: ${{ secrets.LINUXDO_CLIENT_SECRET }}
       LINUXDO_CALLBACK_URL: ${{ secrets.LINUXDO_CALLBACK_URL || vars.LINUXDO_CALLBACK_URL }}
@@ -82,21 +83,7 @@ jobs:
             *) echo "::error::Unsupported runner architecture: $ARCH"; exit 1 ;;
           esac
 
-          NODE_VERSION="$(python3 <<'PY_NODE_VERSION'
-          import json
-          import urllib.request
-
-          with urllib.request.urlopen('https://nodejs.org/dist/index.json', timeout=30) as response:
-              releases = json.load(response)
-          for release in releases:
-              version = release.get('version', '')
-              if version.startswith('v22.') and release.get('lts'):
-                  print(version[1:])
-                  break
-          else:
-              raise SystemExit('No Node.js 22 LTS release found')
-          PY_NODE_VERSION
-          )"
+          NODE_VERSION="22.23.2"
 
           NODE_DIR="$RUNNER_TEMP/node-v${NODE_VERSION}-linux-${NODE_ARCH}"
           ARCHIVE="node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"
@@ -177,26 +164,32 @@ jobs:
         working-directory: mail-vue
         run: pnpm install --frozen-lockfile
 
-      - name: Run backend security tests
+      - name: Run backend industrial audit tests
         working-directory: mail-worker
-        run: |
-          pnpm run security:test
-          pnpm run security:migration-test
-          pnpm run config-secret:test
-          pnpm run web-session:test
-          pnpm run secret-storage:test
-          pnpm run rich-email:test
-          pnpm run email:list:test
+        run: pnpm audit:test
 
-      - name: Run frontend security and API contract tests
+      - name: Run frontend unit/security/design/accessibility contracts
+        working-directory: mail-vue
+        run: pnpm test
+
+      - name: Build and preview-smoke frontend assets
         working-directory: mail-vue
         run: |
-          pnpm run security:test
-          pnpm run contract:test
+          pnpm run build
+          pnpm run e2e:smoke
 
-      - name: Build frontend assets
-        working-directory: mail-vue
-        run: pnpm run build
+      - name: Generate supply-chain manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/supply_chain_contract_test.py
+          python3 .github/scripts/generate_supply_chain_manifest.py
+          {
+            echo '## Supply-chain manifest'
+            echo '```text'
+            cat .audit-artifacts/checksums.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Resolve Cloudflare KV namespace
         working-directory: mail-worker
@@ -294,6 +287,7 @@ jobs:
               'binding = "db"',
               f'database_name = {toml_string(name)}',
               f'database_id = {toml_string(os.environ["RESOLVED_D1_DATABASE_ID"])}',
+              'migrations_dir = "migrations"',
               '',
               '[[kv_namespaces]]',
               'binding = "kv"',
@@ -330,6 +324,7 @@ jobs:
               f'analysis_cache = {str(as_bool("ANALYSIS_CACHE")).lower()}',
               f'password_pbkdf2_iterations = {max(100000, min(int(os.environ.get("PASSWORD_PBKDF2_ITERATIONS", "150000")), 2000000))}',
               f'password_rehash_on_login = {str(as_bool("PASSWORD_REHASH_ON_LOGIN")).lower()}',
+              f'email_trash_retention_days = {max(0, min(int(os.environ.get("EMAIL_TRASH_RETENTION_DAYS", "30")), 3650))}',
               f'init_locked = {str(as_bool("INIT_LOCKED")).lower()}',
               f'domain = {json.dumps(domains, ensure_ascii=False)}',
               f'admin = {toml_string(os.environ["ADMIN"].strip())}',
@@ -416,6 +411,62 @@ jobs:
         working-directory: mail-worker
         shell: bash
         run: rm -f .wrangler-ci-secrets.json
+
+      - name: Capture pre-migration D1 recovery point
+        if: inputs.initialize_database
+        working-directory: mail-worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECOVERY_DIR="$RUNNER_TEMP/cloudmail-d1-recovery"
+          mkdir -p "$RECOVERY_DIR"
+          RECOVERY_TS="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          # Cloudflare D1 Time Travel is the primary rollback mechanism. Capture the
+          # exact pre-migration bookmark and also make a private runner-local SQL export.
+          # The SQL export may contain mail/account data and is intentionally NEVER uploaded.
+          pnpm wrangler d1 time-travel info "$NAME"             --json             --config wrangler-ci.toml > "$RECOVERY_DIR/time-travel.json"
+          pnpm wrangler d1 export "$NAME"             --remote             --skip-confirmation             --output "$RECOVERY_DIR/pre-migration.sql"             --config wrangler-ci.toml
+
+          test -s "$RECOVERY_DIR/time-travel.json" || { echo '::error::D1 Time Travel recovery metadata capture failed'; exit 1; }
+          test -s "$RECOVERY_DIR/pre-migration.sql" || { echo '::error::D1 pre-migration SQL export failed'; exit 1; }
+
+          RECOVERY_BOOKMARK="$(python3 - "$RECOVERY_DIR/time-travel.json" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding='utf-8'))
+
+          def find_bookmark(value):
+              if isinstance(value, dict):
+                  for key, item in value.items():
+                      if str(key).lower() == 'bookmark' and isinstance(item, str) and item.strip():
+                          return item.strip()
+                  for item in value.values():
+                      found = find_bookmark(item)
+                      if found:
+                          return found
+              elif isinstance(value, list):
+                  for item in value:
+                      found = find_bookmark(item)
+                      if found:
+                          return found
+              return ''
+
+          print(find_bookmark(data))
+          PY
+          )"
+          test -n "$RECOVERY_BOOKMARK" || { echo '::error::D1 Time Travel response did not contain a recovery bookmark'; exit 1; }
+
+          EXPORT_SHA="$(sha256sum "$RECOVERY_DIR/pre-migration.sql" | awk '{print $1}')"
+          echo "RECOVERY_TS=$RECOVERY_TS" >> "$GITHUB_ENV"
+          echo "D1_RECOVERY_BOOKMARK=$RECOVERY_BOOKMARK" >> "$GITHUB_ENV"
+          echo "D1_PRE_MIGRATION_EXPORT_SHA256=$EXPORT_SHA" >> "$GITHUB_ENV"
+          {
+            echo '## D1 pre-migration recovery point'
+            echo "- Timestamp: \`$RECOVERY_TS\`"
+            echo "- Time Travel bookmark: \`$RECOVERY_BOOKMARK\`"
+            echo "- Private runner-local export SHA-256: \`$EXPORT_SHA\`"
+            echo '- Sensitive SQL backup was not uploaded.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Initialize or migrate database
         if: inputs.initialize_database
@@ -524,6 +575,16 @@ jobs:
             exit 1
           fi
 
+      - name: Apply versioned D1 integrity migrations
+        if: inputs.initialize_database
+        working-directory: mail-worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Legacy POST /api/init first upgrades Cloud-Mail 3.0.0-era schemas. From this
+          # industrial baseline onward, durable schema/integrity changes are tracked here.
+          pnpm wrangler d1 migrations apply "$NAME" --remote --config wrangler-ci.toml
+
       - name: Post-deploy readiness gate
         shell: bash
         env:
@@ -582,3 +643,8 @@ jobs:
               [ -f "$file" ] && echo "- $file"
             done
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove runner-local D1 recovery export
+        if: always() && inputs.initialize_database
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/cloudmail-d1-recovery"

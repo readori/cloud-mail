@@ -374,6 +374,9 @@
                              v-model="setting.aiCode"/>
                 </div>
               </div>
+              <div class="setting-item ai-privacy-disclosure">
+                <div><span>{{ $t('aiPrivacyDisclosure') }}</span></div>
+              </div>
               <div class="setting-item">
                 <div><span>{{ $t('codeRecognitionRules') }}</span></div>
                 <div class="forward">

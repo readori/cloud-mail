@@ -1,0 +1,12 @@
+import fs from 'node:fs';
+import path from 'node:path';
+const root = path.resolve(import.meta.dirname, '..');
+const style = fs.readFileSync(path.join(root, 'src/style.css'), 'utf8');
+const tokenCss = fs.readFileSync(path.join(root, 'src/design-tokens.css'), 'utf8');
+if (/\*\s*:\s*focus\s*\{[^}]*outline\s*:\s*none/s.test(style)) throw new Error('Global focus outline suppression remains');
+if (!style.includes('*:focus-visible') || !style.includes('--cf-focus-ring')) throw new Error('Visible keyboard focus ring missing');
+if (!style.includes('prefers-reduced-motion: reduce')) throw new Error('Reduce Motion CSS gate missing');
+if (!tokenCss.includes('--cf-control-min: 44px')) throw new Error('44px minimum control token missing');
+const login = fs.readFileSync(path.join(root, 'src/views/login/index.vue'), 'utf8');
+if (/console\.log\s*\(/.test(login)) throw new Error('PII/debug console.log in login view');
+console.log('✅ Web accessibility/focus/reduced-motion contract PASS');

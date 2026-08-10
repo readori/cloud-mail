@@ -174,7 +174,7 @@ const settingService = {
 	async refresh(c) {
 		await this.migrateSecrets(c);
 		const storageRow = await orm(c).select().from(setting).get();
-		if (!storageRow) throw new BizError('数据库未初始化 Database not initialized.');
+		if (!storageRow) throw new BizError('数据库未初始化。');
 		// KV stores the same encrypted envelopes as D1. Plaintext exists only in request memory.
 		await c.env.kv.put(KvConst.SETTING, JSON.stringify(storageRow));
 		const row = await decryptSettingSecrets(c.env, storageRow);
@@ -197,7 +197,7 @@ const settingService = {
 			return row;
 		}
 		const encrypted = await c.env.kv.get(KvConst.SETTING, { type: 'json' });
-		if (!encrypted) throw new BizError('数据库未初始化 Database not initialized.');
+		if (!encrypted) throw new BizError('数据库未初始化。');
 		if (hasUnprotectedSettingSecrets(encrypted)) {
 			// Upgrade legacy plaintext D1/KV immediately instead of serving it until the next manual init.
 			await this.refresh(c);

@@ -39,84 +39,100 @@ export function permsToRouter(permKeys) {
 const routers = {
     'email:send': [
         {
-            path: '/sent',
+            path: '/mail/sent',
+            alias: '/sent',
             name: 'send',
             component: () => import('@/views/send/index.vue'),
             meta: {
                 title: 'sent',
                 name: 'send',
-                menu: true
+                menu: true,
+                workspace: 'mail'
             }
         },
         {
-            path: '/drafts',
+            path: '/mail/drafts',
+            alias: '/drafts',
             name: 'draft',
             component: () => import('@/views/draft/index.vue'),
             meta: {
                 title: 'drafts',
                 name: 'draft',
-                menu: true
+                menu: true,
+                workspace: 'mail'
             }
         }
     ],
     'user:query': [{
-        path: '/all-users',
+        path: '/admin/users',
+        alias: '/all-users',
         name: 'user',
         component: () => import('@/views/user/index.vue'),
         meta: {
             title: 'allUsers',
             name: 'user',
-            menu: true
+            menu: true,
+            workspace: 'admin'
         }
     }],
     'role:query': [{
-        path: '/role',
+        path: '/admin/roles',
+        alias: '/role',
         name: 'role',
         component: () => import('@/views/role/index.vue'),
         meta: {
             title: 'permissions',
             name: 'role',
-            menu: true
+            menu: true,
+            workspace: 'admin'
         }
     }],
     'setting:query': [{
-        path: '/system-setting',
+        path: '/admin/system-settings',
+        alias: '/system-setting',
         name: 'sys-setting',
         component: () => import('@/views/sys-setting/index.vue'),
         meta: {
             title: 'SystemSettings',
             name: 'sys-setting',
-            menu: true
+            menu: true,
+            workspace: 'admin'
         }
     }],
     'reg-key:query': [{
-        path: '/invite-code',
+        path: '/admin/invite-codes',
+        alias: '/invite-code',
         name: 'reg-key',
         component: () => import('@/views/reg-key/index.vue'),
         meta: {
             title: 'inviteCode',
             name: 'reg-key',
-            menu: true
+            menu: true,
+            workspace: 'admin'
         }
     }],
     'all-email:query': [{
-        path: '/all-mail',
+        path: '/admin/all-mail',
+        alias: '/all-mail',
         name: 'all-email',
         component: () => import('@/views/all-email/index.vue'),
         meta: {
             title: 'allMail',
             name: 'all-email',
-            menu: true
+            menu: true,
+            workspace: 'admin'
         }
     }],
     'analysis:query': [{
-        path: '/analysis',
+        path: '/admin/analysis',
+        alias: '/analysis',
         name: 'analysis',
         component: () => import('@/views/analysis/index.vue'),
         meta: {
             title: 'analytics',
             name: 'analysis',
-            menu: true
+            menu: true,
+            workspace: 'admin'
         }
     }]
 }

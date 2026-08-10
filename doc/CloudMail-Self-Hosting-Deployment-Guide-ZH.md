@@ -15,7 +15,6 @@ cloud-mail/
 ├── mail-worker/                 # Cloudflare Worker 后端 + API + Email Handler + Worker Assets
 ├── mail-vue/                    # Vue Web 前端
 ├── cfmail-push-gateway/         # 独立 APNs Push Gateway
-├── mail-ios/                    # CF Mail iOS 客户端
 └── .github/workflows/           # GitHub Actions
 ```
 
@@ -945,16 +944,7 @@ https://push.readori.com
 
 只说明“客户端/CloudMail 应该向哪里发送 Push Gateway 请求”。
 
-它不会泄露：
-
-- Apple `.p8`
-- Apple Team ID
-- APNs Key ID
-- Cloudflare Account Token
-- 用户 CloudMail 登录密码
-- Gateway 内部数据库凭据
-
-真正的安全性来自：
+安全性来自：
 
 - scoped `subscriptionId`
 - scoped `pushSecret`
@@ -965,96 +955,8 @@ https://push.readori.com
 - 日志脱敏
 - 不让 CloudMail Worker 持有 APNs provider credentials
 
-## 官方 Gateway 的运营建议
 
-既然这是公共 Hosted Service，建议生产环境至少配置：
-
-- Cloudflare WAF
-- Rate Limiting
-- Bot / abuse protection
-- Subscription 数量限制
-- 单 installation/source 去重
-- Queue / DLQ 告警
-- APNs 错误率监控
-- 日志 device token 脱敏
-- 不记录完整 `pushSecret`
-- 独立隐私说明
-- 独立服务可用性说明
-
-这样可以在公开服务 URL 的同时，继续保护真正敏感的生产基础设施。
-
-# 19. 用户自建 Push Gateway
-
-只有在以下场景才需要：
-
-- 用户自己编译 iOS App；
-- 用户拥有自己的 Apple Developer Account；
-- 用户使用自己的 Bundle ID；
-- 用户希望完全自己掌控 APNs。
-
-目录：
-
-```bash
-cd cfmail-push-gateway
-npm install
-npm test
-```
-
-创建 D1：
-
-```bash
-npx wrangler d1 create cfmail-push-gateway
-```
-
-创建 Queues：
-
-```bash
-npx wrangler queues create cfmail-apns-retry
-npx wrangler queues create cfmail-apns-dead-letter
-```
-
-应用 migration：
-
-```bash
-npm run db:migrate:remote
-```
-
-设置：
-
-```bash
-npx wrangler secret put APNS_KEY_ID
-npx wrangler secret put APNS_TEAM_ID
-npx wrangler secret put APNS_PRIVATE_KEY
-```
-
-设置自己的 Bundle ID：
-
-```toml
-[vars]
-APNS_BUNDLE_ID = "com.example.cfmail"
-```
-
-部署：
-
-```bash
-npm run deploy
-```
-
-绑定你自己的自定义域名，例如：
-
-```text
-https://push.example.com
-```
-
-然后 CloudMail 配置：
-
-```text
-CFMAIL_PUSH_GATEWAY_URL=https://push.example.com
-```
-
----
-
-# 20. 重要：官方 App Store iOS 与自建 Gateway
+# 18. 重要：官方 App Store iOS 与自建 Gateway
 
 Apple Push Notification 不是“知道 URL 就能发”。
 
@@ -1068,34 +970,9 @@ Bundle ID / Topic
 
 绑定。
 
-因此：
-
-### 使用官方 App Store CF Mail
-
-普通自建用户不应该拿到官方：
-
-```text
-APNS_PRIVATE_KEY
-APNS_KEY_ID
-APNS_TEAM_ID
-```
-
-这些永远不能写入开源仓库或部署教程。
-
-### 自己编译 iOS
-
-用户可以：
-
-1. 换成自己的 Bundle ID；
-2. 使用自己的 Apple Developer Team；
-3. 创建自己的 APNs Key；
-4. 自建 `cfmail-push-gateway`；
-5. 修改 iOS 的 Gateway Base URL；
-6. 重新签名安装。
-
 ---
 
-# 21. Push Gateway 健康检查
+# 19. Push Gateway 健康检查
 
 ```bash
 curl -fsS https://push.example.com/healthz
@@ -1124,7 +1001,7 @@ cfmail-apns-dead-letter
 
 ---
 
-# 22. Push Gateway 可靠性
+# 20. Push Gateway 可靠性
 
 当前架构使用：
 
@@ -1143,7 +1020,7 @@ cfmail-apns-dead-letter
 
 ---
 
-# 23. iOS 推送上线验证
+# 21. iOS 推送上线验证
 
 真实 APNs 必须使用真机验证。
 
@@ -1177,7 +1054,7 @@ Settings → Notifications → CF Mail → Show Previews
 
 ---
 
-# 24. 推荐生产部署顺序
+# 22. 推荐生产部署顺序
 
 完整生产顺序：
 
@@ -1211,12 +1088,11 @@ Settings → Notifications → CF Mail → Show Previews
 → POST /api/init
 → 验证 health
 → 验证 Web
-→ 验证 iOS
 ```
 
 ---
 
-# 25. 上线后的最低验证清单
+# 23. 上线后的最低验证清单
 
 ## Worker
 
@@ -1285,7 +1161,7 @@ Settings → Notifications → CF Mail → Show Previews
 
 ---
 
-# 26. 安全红线
+# 24. 安全红线
 
 永远不要提交：
 
@@ -1312,7 +1188,7 @@ Apple AuthKey_*.p8
 
 ---
 
-# 27. 结论
+# 25. 结论
 
 当前 CloudMail 的推荐自建模型是：
 
@@ -1347,5 +1223,3 @@ Apple AuthKey_*.p8
 最重要的边界：
 
 > **CloudMail 自建服务器属于用户；APNs Provider Credentials 不属于普通 CloudMail Worker。**
->
-> 开源自建文档可以公开官方 Push Gateway 的公共服务 URL，但绝不能公开任何 Apple APNs provider credentials、Cloudflare Token、Gateway 内部凭据或其他真正的 Secret。

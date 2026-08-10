@@ -25,6 +25,17 @@ for (const field of Object.keys(legacy)) {
 }
 assert.deepEqual(await decryptSettingSecrets({ config_encryption_key: current }, migrated.row), legacy);
 
+// Simulate a D1/export/restore boundary: encrypted envelopes must survive a serialized backup
+// without ever requiring plaintext in the backup artifact.
+const restoredCiphertextRow = JSON.parse(JSON.stringify(migrated.row));
+assert.deepEqual(
+  await decryptSettingSecrets({ config_encryption_key: current }, restoredCiphertextRow),
+  legacy
+);
+for (const field of Object.keys(legacy)) {
+  assert.equal(JSON.stringify(restoredCiphertextRow).includes(legacy[field]), false, `backup must not contain plaintext ${field}`);
+}
+
 const oldEnvelope = await encryptConfigSecret(previous, 'secretKey', 'rotate-me');
 const rotated = await encryptSettingSecrets({
   config_encryption_key: current,
@@ -45,4 +56,4 @@ const empty = await encryptSettingSecrets({ config_encryption_key: current }, {
 assert.equal(empty.changed, false);
 assert.equal(empty.row.resendTokens, '{}');
 
-console.log('✅ config secret AES-GCM migration + rotation contract PASS');
+console.log('✅ config secret AES-GCM migration + rotation + encrypted backup/restore contract PASS');

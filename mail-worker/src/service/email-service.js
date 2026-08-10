@@ -543,6 +543,31 @@ const emailService = {
 		return list;
 	},
 
+	async cleanupRetention(c) {
+		const rawDays = Number(c.env?.email_trash_retention_days ?? 30);
+		const retentionDays = Number.isFinite(rawDays) ? Math.max(0, Math.min(3650, Math.trunc(rawDays))) : 30;
+		if (retentionDays === 0 || !c.env?.db?.prepare) return { deleted: 0, retentionDays };
+
+		let total = 0;
+		while (true) {
+			const rows = await c.env.db.prepare(`
+				SELECT email_id AS emailId
+				FROM email
+				WHERE is_del = 1
+				  AND deleted_at IS NOT NULL
+				  AND deleted_at < datetime('now', '-' || ? || ' days')
+				ORDER BY email_id
+				LIMIT 250
+			`).bind(retentionDays).all();
+			const ids = (rows?.results || rows || []).map(row => Number(row.emailId)).filter(Number.isSafeInteger);
+			if (ids.length === 0) break;
+			await this.physicsDelete(c, { emailIds: ids.join(',') });
+			total += ids.length;
+			if (ids.length < 250) break;
+		}
+		return { deleted: total, retentionDays };
+	},
+
 	async physicsDelete(c, params = {}) {
 		const emailIds = toIdList(params.emailIds, { name: 'emailIds', maxItems: 500 });
 		await attService.removeByEmailIds(c, emailIds);

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://design-tokens.github.io/community-group/format/",
+  "name": "CF Mail Cross-Platform Semantic Tokens",
+  "version": 1,
+  "spacing": {"xxs":4,"xs":8,"sm":12,"md":16,"lg":20,"xl":24,"xxl":32,"xxxl":40,"page":18},
+  "radius": {"input":12,"button":14,"card":18,"floating":22,"hero":28,"pill":999},
+  "control": {"minimumTapTarget":44,"primaryButtonHeight":52,"searchHeight":44,"floatingButton":56},
+  "motion": {"quickMs":160,"standardMs":280},
+  "themes": {
+    "polar": {"accent":"#1890ff","surface":"#ffffff","surfaceMuted":"#f5f7fa","text":"#1f2329","focus":"#006be6"},
+    "mono": {"accent":"#242424","surface":"#ffffff","surfaceMuted":"#f3f3f3","text":"#111111","focus":"#111111"},
+    "oled": {"accent":"#8ab4ff","surface":"#000000","surfaceMuted":"#111111","text":"#f5f5f5","focus":"#8ab4ff"}
+  }
+}

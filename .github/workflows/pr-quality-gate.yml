@@ -1,0 +1,85 @@
+name: PR Quality Gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios-contracts:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Select Xcode 26+
+        run: |
+          set -euo pipefail
+          XCODE_APP="$(find /Applications -maxdepth 1 -type d -name 'Xcode_26*.app' -print | sort -V | tail -1)"
+          test -n "$XCODE_APP" || { echo '::error::Xcode 26+ is required'; exit 1; }
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
+      - name: Phase 11 + Cloud-Mail 3.0.0 floor
+        run: |
+          set -euo pipefail
+          /bin/bash mail-ios/scripts/phase11_static_qa.sh
+          /bin/bash mail-ios/scripts/test_cloudmail_300_compatibility.sh
+      - name: Swift type build smoke
+        run: |
+          set -euo pipefail
+          xcodebuild -project mail-ios/CloudMail.xcodeproj -scheme CloudMail -destination 'generic/platform=iOS' -configuration Debug CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+
+  worker-web-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.23.2'
+          cache: pnpm
+          cache-dependency-path: |
+            mail-worker/pnpm-lock.yaml
+            mail-vue/pnpm-lock.yaml
+      - name: Install Worker
+        working-directory: mail-worker
+        run: pnpm install --frozen-lockfile
+      - name: Worker audit test pyramid
+        working-directory: mail-worker
+        run: pnpm audit:test
+      - name: Install, test, build, and preview-smoke Web
+        working-directory: mail-vue
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm audit:test
+      - name: Industrial audit repository closure contract
+        run: python3 .github/scripts/audit_closure_contract.py
+      - name: Supply-chain reproducibility contract
+        run: |
+          python3 .github/scripts/supply_chain_contract_test.py
+          python3 .github/scripts/generate_supply_chain_manifest.py
+
+  push-gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.23.2'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 9.15.9
+          run_install: false
+      - working-directory: cfmail-push-gateway
+        run: pnpm install --frozen-lockfile && pnpm test

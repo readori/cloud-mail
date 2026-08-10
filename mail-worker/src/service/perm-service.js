@@ -5,7 +5,7 @@ import rolePerm from '../entity/role-perm';
 import user from '../entity/user';
 import role from '../entity/role';
 import { permConst } from '../const/entity-const';
-import { t } from '../i18n/i18n'
+import { tForRequest } from '../i18n/i18n'
 
 const permService = {
 	async tree(c) {
@@ -18,7 +18,7 @@ const permService = {
 		for (const row of rows) {
 			nodes.set(row.permId, {
 				...row,
-				name: t('perms.' + row.name),
+				name: tForRequest(c, 'perms.' + row.name),
 				children: []
 			});
 		}

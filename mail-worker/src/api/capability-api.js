@@ -7,7 +7,14 @@ import pushWebhookService from '../service/push-webhook-service';
 // as the conservative 3.0.0 baseline and keeps all core mail features working.
 app.get('/capabilities', async (c) => {
 	return c.json(result.ok({
-		schemaVersion: 1,
+		schemaVersion: 2,
+		apiVersion: 1,
+		folders: false,
+		trash: false,
+		spam: false,
+		serverSearch: false,
+		serverDrafts: false,
+		serverScheduledSend: false,
 		emailDetail: true,
 		extendedRecipients: true,
 		pushRegistration: pushWebhookService.isConfigured(c),

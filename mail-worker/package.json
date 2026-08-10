@@ -4,13 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev --config wrangler-dev.toml",
-    "test": "wrangler deploy --config wrangler-test.toml",
+    "test": "vitest run",
     "deploy": "wrangler deploy",
     "start": "wrangler dev",
-    "security:test": "node --experimental-default-type=module scripts/security-smoke-test.mjs",
+    "security:test": "node scripts/security-smoke-test.mjs",
     "security:migration-test": "python3 scripts/security-migration-test.py && python3 scripts/push-gateway-migration-test.py",
-    "email:list:test": "node --experimental-default-type=module scripts/email-list-contract-test.mjs",
-    "telegram:test": "node --experimental-default-type=module scripts/telegram-forward-contract-test.mjs",
+    "email:list:test": "node scripts/email-list-contract-test.mjs",
+    "telegram:test": "node scripts/telegram-forward-contract-test.mjs",
     "push:contract-test": "node scripts/push-webhook-contract-test.mjs",
     "rich-email:test": "node scripts/rich-email-sanitizer-contract-test.mjs",
     "init:security-test": "node scripts/init-security-contract-test.mjs",
@@ -18,7 +18,16 @@
     "web-session:test": "node scripts/web-session-security-contract-test.mjs",
     "secret-storage:test": "node scripts/secret-storage-contract-test.mjs",
     "runtime:test": "vitest run",
-    "health:test": "node scripts/health-smoke.mjs"
+    "health:test": "node scripts/health-smoke.mjs",
+    "db:migration-test": "python3 scripts/versioned-migration-test.py",
+    "db:migrate:local": "wrangler d1 migrations apply cloud-mail --local",
+    "db:migrate:remote": "wrangler d1 migrations apply cloud-mail --remote",
+    "openapi:generate": "node scripts/generate-openapi.mjs",
+    "openapi:test": "node scripts/openapi-contract-test.mjs",
+    "i18n:test": "node scripts/i18n-error-contract-test.mjs",
+    "retention:test": "node scripts/retention-contract-test.mjs",
+    "ai-privacy:test": "node scripts/ai-privacy-contract-test.mjs",
+    "audit:test": "pnpm test && pnpm security:test && pnpm security:migration-test && pnpm db:migration-test && pnpm init:security-test && pnpm config-secret:test && pnpm web-session:test && pnpm secret-storage:test && pnpm rich-email:test && pnpm email:list:test && pnpm push:contract-test && pnpm openapi:test && pnpm i18n:test && pnpm retention:test && pnpm ai-privacy:test"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.7.5",
@@ -38,5 +47,6 @@
     "ua-parser-js": "^2.0.3",
     "uuid": "^11.1.0"
   },
-  "packageManager": "pnpm@9.15.9"
+  "packageManager": "pnpm@9.15.9",
+  "type": "module"
 }

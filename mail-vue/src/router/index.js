@@ -9,47 +9,55 @@ const routes = [
     {
         path: '/',
         name: 'layout',
-        redirect: '/inbox',
+        redirect: '/mail/inbox',
         component: () => import('@/layout/index.vue'),
         children: [
             {
-                path: '/inbox',
+                path: '/mail/inbox',
+                alias: '/inbox',
                 name: 'email',
                 component: () => import('@/views/email/index.vue'),
                 meta: {
                     title: 'inbox',
                     name: 'email',
-                    menu: true
+                    menu: true,
+                    workspace: 'mail'
                 }
             },
             {
-                path: '/message',
+                path: '/mail/message',
+                alias: '/message',
                 name: 'content',
                 component: () => import('@/views/content/index.vue'),
                 meta: {
                     title: 'message',
                     name: 'content',
-                    menu: false
+                    menu: false,
+                    workspace: 'mail'
                 }
             },
             {
-                path: '/settings',
+                path: '/mail/settings',
+                alias: '/settings',
                 name: 'setting',
                 component: () => import('@/views/setting/index.vue'),
                 meta: {
                     title: 'settings',
                     name: 'setting',
-                    menu: true
+                    menu: true,
+                    workspace: 'mail'
                 }
             },
             {
-                path: '/starred',
+                path: '/mail/starred',
+                alias: '/starred',
                 name: 'star',
                 component: () => import('@/views/star/index.vue'),
                 meta: {
                     title: 'starred',
                     name: 'star',
-                    menu: true
+                    menu: true,
+                    workspace: 'mail'
                 }
             },
         ]
@@ -59,11 +67,6 @@ const routes = [
         path: '/login',
         name: 'login',
         component: () => import('@/views/login/index.vue')
-    },
-    {
-        path: '/test',
-        name: 'test',
-        component: () => import('@/views/test/index.vue')
     },
     {
         path: '/:pathMatch(.*)*',

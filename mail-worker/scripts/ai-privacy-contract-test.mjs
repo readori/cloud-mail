@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+const root=path.resolve(import.meta.dirname,'../..');
+const ai=fs.readFileSync(path.join(root,'mail-worker/src/service/ai-service.js'),'utf8');
+const web=fs.readFileSync(path.join(root,'mail-vue/src/i18n/en.js'),'utf8');
+const ios=fs.readFileSync(path.join(root,'mail-ios/Features/Settings/SystemSettingsView.swift'),'utf8');
+for (const token of ['aiCode !== settingConst.aiCode.OPEN','aiCodeFilterStr','item === fromEmail || item === fromDomain','.slice(0, 6000)']) if(!ai.includes(token)) throw new Error(`AI privacy gate missing: ${token}`);
+if(!web.includes('up to 6,000 characters of body text')) throw new Error('Web AI disclosure missing');
+if(!ios.includes('最多 6,000 字符正文')) throw new Error('iOS AI disclosure missing');
+console.log('✅ AI default-off / sender-domain allowlist / data-path disclosure contract PASS');

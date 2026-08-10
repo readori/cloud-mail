@@ -9,14 +9,21 @@ describe('CloudMail runtime smoke', () => {
 		expect(response.status).toBe(200);
 		const body = await response.json();
 		expect(body.service).toBe('cloud-mail');
-		expect(body.checks.d1).toBe(true);
-		expect(body.checks.kv).toBe(true);
+		expect(body.ready).toBe(true);
+		expect(body.checks).toBeUndefined();
 	});
 
 	it('keeps the retired URL-secret init endpoint inert', async () => {
 		const response = await SELF.fetch('http://example.com/api/init/should-never-be-consumed');
 		expect(response.status).toBe(410);
 		expect(await response.text()).toContain('X-Init-Secret');
+	});
+
+	it('does not expose detailed dependency health anonymously', async () => {
+		const response = await SELF.fetch('http://example.com/api/health/detail');
+		expect(response.status).toBe(401);
+		const body = await response.json();
+		expect(body?.data?.checks ?? body?.checks).toBeUndefined();
 	});
 
 	it('hashes new passwords at the industrial policy cost while accepting old hashes for rehash', async () => {
@@ -39,6 +46,17 @@ describe('CloudMail runtime smoke', () => {
 		await expect(rateLimitService.check(context, 'vitest-login', { limit: 2, windowSeconds: 60 })).rejects.toMatchObject({ code: 429 });
 		const row = await env.db.prepare(`SELECT count FROM rate_limit_bucket LIMIT 1`).first();
 		expect(Number(row.count)).toBe(3);
+	});
+
+
+	it('publishes the versioned API/OpenAPI compatibility surface', async () => {
+		const doc = await SELF.fetch('http://example.com/api/v1/openapi.json');
+		expect(doc.status).toBe(200);
+		expect(doc.headers.get('X-CloudMail-API-Version')).toBe('1');
+		const body = await doc.json();
+		expect(body.openapi).toMatch(/^3\./);
+		expect(body.info?.title).toContain('CloudMail');
+		expect(Object.keys(body.paths || {}).length).toBeGreaterThan(20);
 	});
 
 });

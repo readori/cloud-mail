@@ -1,0 +1,42 @@
+:root,
+html[data-cf-theme="polar"] {
+  --cf-space-xxs: 4px;
+  --cf-space-xs: 8px;
+  --cf-space-sm: 12px;
+  --cf-space-md: 16px;
+  --cf-space-lg: 20px;
+  --cf-space-xl: 24px;
+  --cf-space-xxl: 32px;
+  --cf-space-xxxl: 40px;
+  --cf-space-page: 18px;
+  --cf-radius-input: 12px;
+  --cf-radius-button: 14px;
+  --cf-radius-card: 18px;
+  --cf-radius-floating: 22px;
+  --cf-radius-hero: 28px;
+  --cf-radius-pill: 999px;
+  --cf-control-min: 44px;
+  --cf-control-primary: 52px;
+  --cf-focus-ring: #006be6;
+  --cf-brand-accent: #1890ff;
+  --cf-surface: #ffffff;
+  --cf-surface-muted: #f5f7fa;
+  --cf-text: #1f2329;
+}
+
+html[data-cf-theme="mono"] {
+  --cf-focus-ring: #111111;
+  --cf-brand-accent: #242424;
+  --cf-surface: #ffffff;
+  --cf-surface-muted: #f3f3f3;
+  --cf-text: #111111;
+}
+
+html[data-cf-theme="oled"],
+html.dark[data-cf-theme="oled"] {
+  --cf-focus-ring: #8ab4ff;
+  --cf-brand-accent: #8ab4ff;
+  --cf-surface: #000000;
+  --cf-surface-muted: #111111;
+  --cf-text: #f5f5f5;
+}

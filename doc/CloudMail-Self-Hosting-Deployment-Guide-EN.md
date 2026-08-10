@@ -1,66 +1,67 @@
-# CloudMail Self-Hosting Deployment Guide — Current Backend, Web and iOS Integration
+# CloudMail Latest Self-Hosting Deployment Guide (Backend + Web + iOS Integration)
 
-> This guide is written for open-source self-hosters and follows the current CloudMail architecture: `mail-worker` + `mail-vue` are deployed as one Cloudflare Workers full-stack application; D1 and KV are required, R2 is optional; CF Mail iOS connects to the user's CloudMail API; remote notifications are handled by the separate `cfmail-push-gateway`.
+> This guide is intended for open-source self-hosters. It follows the current CloudMail project architecture: `mail-worker` + `mail-vue` are deployed together as a full-stack Cloudflare Workers application; D1/KV are required resources, while R2 is optional; CF Mail iOS connects to a self-hosted server through the CloudMail API; remote push notifications are handled by the independent `cfmail-push-gateway`.
 >
-> **Push-service note:** the official CF Mail app currently uses the public hosted Push Gateway at `https://push.readori.com`. The URL itself is a public service endpoint, not a secret. What must remain private are the Apple APNs `.p8`, `APNS_KEY_ID`, `APNS_TEAM_ID`, Cloudflare API tokens, Gateway database/internal credentials, and other private infrastructure secrets. Self-hosters may use the official Gateway, operate their own Gateway, or disable remote push.
+> **Push service note:** The official CF Mail app currently uses the public hosted Push Gateway at `https://push.readori.com`. This URL is a public service endpoint and is not a Secret. What must remain private are the Apple APNs `.p8`, `APNS_KEY_ID`, `APNS_TEAM_ID`, Cloudflare API Token, Gateway database/internal credentials, and similar sensitive values. Self-hosters may also choose not to use the official Gateway at all, use their own Gateway, or disable remote push.
 
 ---
 
-## 1. Current project structure
+## 1. Current Project Structure
+
+Core directories:
 
 ```text
 cloud-mail/
-├── mail-worker/                 # Cloudflare Worker backend, APIs, Email handler and Worker Assets
-├── mail-vue/                    # Vue web frontend
+├── mail-worker/                 # Cloudflare Worker backend + API + Email Handler + Worker Assets
+├── mail-vue/                    # Vue Web frontend
 ├── cfmail-push-gateway/         # Independent APNs Push Gateway
-├── mail-ios/                    # CF Mail iOS client
 └── .github/workflows/           # GitHub Actions
 ```
 
 ### 1.1 `mail-worker`
 
-Responsibilities include:
+Responsibilities:
 
 - `/api/*` backend APIs
-- users, accounts, messages, settings and permissions
+- Business logic for users, accounts, mail, settings, permissions, etc.
 - Cloudflare Email Routing `email` handler
-- D1 access
-- KV sessions, caching and rate limiting
+- D1 data access
+- KV sessions / caching / rate limiting
 - R2 / S3 / KV attachment storage
-- Worker-hosted web assets
-- initialization and database migrations
-- CloudMail-to-Gateway push webhooks
-- health checks
+- Web static asset hosting
+- Initialization and database migrations
+- CloudMail → Push Gateway push webhook
+- Health checks
 
 ### 1.2 `mail-vue`
 
-The Vue frontend is **not** intended to be deployed separately to Cloudflare Pages.
+The Vue frontend is not deployed separately to Cloudflare Pages.
 
-The current build flow runs:
+The current project runs:
 
 ```bash
 cd mail-vue
 pnpm run build
 ```
 
-The generated assets are then served by `mail-worker` through Workers Assets.
+The build output is written to the Worker's static asset directory and then published together with `mail-worker` through Workers Assets.
 
-The production origin therefore looks like:
+The final deployment therefore looks like:
 
 ```text
 Browser
    │
    ├── /             → Vue / Worker Assets
-   └── /api/*        → mail-worker APIs
+   └── /api/*        → mail-worker API
 ```
 
-Keeping both on the same origin also avoids an unnecessary separate CORS deployment.
+The frontend and backend share the same origin, so there is no need to configure a separate cross-origin API domain for the Web app.
 
 ### 1.3 `cfmail-push-gateway`
 
-This is an independent Worker and is optional for a normal CloudMail self-host.
+This is an independent Worker and is not a mandatory component of a normal self-hosted CloudMail server.
 
-Its responsibility boundary is:
+It is responsible for:
 
 ```text
 CF Mail iOS
@@ -78,7 +79,7 @@ Push Gateway
 Apple APNs
 ```
 
-A normal self-hosted CloudMail Worker should **not** store an Apple `.p8` key or raw APNs device token.
+**A normal CloudMail Worker does not store the Apple APNs `.p8` key and should not store APNs device tokens.**
 
 ---
 
@@ -86,15 +87,15 @@ A normal self-hosted CloudMail Worker should **not** store an Apple `.p8` key or
 
 Recommended:
 
-- Cloudflare account
-- a domain managed by Cloudflare
-- a fork or clone of the repository
+- Cloudflare Account
+- A domain hosted on Cloudflare
+- A GitHub repository Fork / Clone
 - Node.js 22
 - pnpm 9.15.x
 - Wrangler
-- optional Apple Developer account only if you are rebuilding iOS and operating your own Push Gateway
+- Optional: Apple Developer Account (only required if you build iOS yourself and self-host the Push Gateway)
 
-Install pnpm:
+Install:
 
 ```bash
 corepack enable
@@ -110,22 +111,22 @@ pnpm --version
 
 ---
 
-# 3. Cloudflare resources
+# 3. Cloudflare Resources
 
-## 3.1 D1 — required
+## 3.1 D1 — Required
 
-CloudMail uses D1 for its primary relational data, including:
+CloudMail uses D1 to store its primary relational data:
 
-- users
-- mail accounts
-- messages
-- system settings
-- permissions
-- invite codes
-- push subscriptions
-- other application records
+- Users
+- Mail accounts
+- Messages
+- System settings
+- Permissions
+- Invite codes
+- Push Subscriptions
+- Other business data
 
-Create it:
+Create:
 
 ```bash
 cd mail-worker
@@ -133,7 +134,7 @@ pnpm wrangler login
 pnpm wrangler d1 create cloud-mail
 ```
 
-Save the returned:
+Record:
 
 ```text
 database_id
@@ -145,28 +146,28 @@ The Worker binding must remain:
 binding = "db"
 ```
 
-Do not arbitrarily rename it to `DB`, `database`, etc.
+Do not arbitrarily rename it to `DB`, `database`, or another value.
 
 ---
 
-## 3.2 Workers KV — required
+## 3.2 Workers KV — Required
 
 KV is used for:
 
-- sessions
-- settings cache
-- rate-limit state
-- temporary/public tokens
-- runtime caches
-- storage fallback when R2 is not configured
+- Sessions
+- Settings cache
+- Rate-limit state
+- Temporary/public tokens
+- Some runtime caches
+- Storage fallback when R2 is not configured
 
-Create it:
+Create:
 
 ```bash
 pnpm wrangler kv namespace create cloud-mail
 ```
 
-Save the namespace ID.
+Record the namespace ID.
 
 The binding must remain:
 
@@ -176,9 +177,9 @@ binding = "kv"
 
 ---
 
-## 3.3 R2 — optional but recommended
+## 3.3 R2 — Optional but Recommended
 
-For larger attachment workloads:
+If you expect many attachments, creating an R2 bucket is recommended:
 
 ```bash
 pnpm wrangler r2 bucket create cloud-mail-assets
@@ -192,27 +193,27 @@ binding = "r2"
 bucket_name = "cloud-mail-assets"
 ```
 
-Without R2, the current project can fall back to other storage paths, and an external S3 service can also be configured through the admin UI.
+If R2 is not configured, the current project can fall back to other storage paths; an external S3 service can also be configured in the admin backend.
 
-For production systems with many or long-lived attachments, prefer R2 or S3 over long-term KV fallback.
+**For production environments that store many attachments for long periods, R2 or S3 is recommended instead of relying on KV long-term.**
 
 ---
 
 # 4. Cloudflare Email Routing
 
-Deploying the Worker alone does not make the domain receive email.
+Deploying the Worker alone does not mean the server can already receive email.
 
-In Cloudflare Dashboard enable:
+In Cloudflare Dashboard, enable Email Routing for the mail domain:
 
 ```text
 Email → Email Routing
 ```
 
-Create routes that deliver inbound mail to the CloudMail Worker.
+Then create a route that delivers incoming mail to the CloudMail Worker.
 
-The project already exports an `email` handler, but Cloudflare still needs a routing rule.
+The project already contains an `email` handler, but Cloudflare still requires an Email Routing rule.
 
-Typical flow:
+Recommended flow:
 
 ```text
 MX / Email Routing
@@ -227,19 +228,19 @@ CloudMail Worker email handler
 D1 / R2 / KV
 ```
 
-For multiple inbound domains, keep the `DOMAIN` configuration aligned with Email Routing.
+If you use multiple inbound domains, make sure `DOMAIN` matches the Email Routing configuration.
 
 ---
 
-# 5. Required secrets
+# 5. Required Secrets
 
-Never commit secrets to:
+Do not write sensitive values directly into:
 
 ```text
 wrangler.toml
 GitHub Actions YAML
-README files
-public repositories
+README
+Public repository
 ```
 
 Use:
@@ -252,21 +253,21 @@ or GitHub Repository Secrets.
 
 ## 5.1 `JWT_SECRET`
 
-Used for CloudMail authentication/session/JWT security.
+Used for CloudMail login/session/JWT.
 
-Use at least 32 characters; a 64-byte random value is recommended:
+It must be at least 32 characters. A random 64-byte value is recommended:
 
 ```bash
 openssl rand -hex 64
 ```
 
-Worker secret:
+Set it with:
 
 ```bash
 pnpm wrangler secret put jwt_secret
 ```
 
-GitHub Secret:
+GitHub Actions Secret name:
 
 ```text
 JWT_SECRET
@@ -290,13 +291,13 @@ Generate:
 openssl rand -hex 64
 ```
 
-Set:
+Set it with:
 
 ```bash
 pnpm wrangler secret put init_secret
 ```
 
-GitHub Secret:
+GitHub:
 
 ```text
 INIT_SECRET
@@ -306,42 +307,42 @@ INIT_SECRET
 
 ## 5.3 `CONFIG_ENCRYPTION_KEY`
 
-The current hardened backend uses this key to protect dynamically stored integration secrets.
+The current hardened version uses this key to protect dynamically configurable sensitive integration secrets.
 
 Requirements:
 
-- at least 32 characters
-- different from `JWT_SECRET`
-- different from `INIT_SECRET`
-- never store it in `[vars]`
+- At least 32 characters
+- Must not be the same as `JWT_SECRET`
+- Must not be the same as `INIT_SECRET`
+- Do not place it in `[vars]`
 
-Set:
+Set it with:
 
 ```bash
 pnpm wrangler secret put config_encryption_key
 ```
 
-GitHub Secret:
+GitHub:
 
 ```text
 CONFIG_ENCRYPTION_KEY
 ```
 
-### Key rotation
+### Key Rotation
 
-During a rotation window, temporarily configure:
+During a rotation window, you may temporarily configure:
 
 ```text
 CONFIG_ENCRYPTION_KEY_PREVIOUS
 ```
 
-After initialization/migration has re-encrypted legacy values and you have verified the deployment, remove the previous key.
+After database initialization/migration is complete and you have confirmed that legacy data has been re-encrypted, remove the previous key.
 
 ---
 
 # 6. Common Variables / Repository Variables
 
-Depending on enabled features:
+The following values are not APNs private keys and can be configured as needed:
 
 ```text
 NAME
@@ -371,7 +372,7 @@ CUSTOM_DOMAIN=mail.example.com
 R2_BUCKET_NAME=cloud-mail-assets
 ```
 
-`DOMAIN` is a JSON array:
+`DOMAIN` is a JSON array, not a plain string:
 
 ```text
 ["example.com"]
@@ -385,9 +386,9 @@ Multiple domains:
 
 ---
 
-# 7. Optional secrets
+# 7. Optional Secrets
 
-Depending on features:
+Enable as needed:
 
 ```text
 LINUXDO_CLIENT_SECRET
@@ -395,11 +396,11 @@ RESEND_WEBHOOK_SECRET
 CONFIG_ENCRYPTION_KEY_PREVIOUS
 ```
 
-Keep them in Worker Secrets / GitHub Secrets.
+These should still be managed through Worker Secrets / GitHub Secrets.
 
 ---
 
-# 8. Local installation and QA
+# 8. Local Installation and QA
 
 Clone:
 
@@ -415,7 +416,7 @@ cd mail-worker
 pnpm install --frozen-lockfile
 ```
 
-Before production deployment, run the security and contract tests available in the current package:
+Before deployment, it is recommended to run at least the security and contract tests currently included in the project:
 
 ```bash
 pnpm run runtime:test
@@ -430,7 +431,7 @@ pnpm run email:list:test
 pnpm run push:contract-test
 ```
 
-If a script does not exist in your fork/revision, use the scripts actually defined by that revision's `package.json`.
+If a script does not exist in your Fork, use the scripts actually defined in that revision's `package.json`.
 
 ## 8.2 Web
 
@@ -442,19 +443,19 @@ pnpm run contract:test
 pnpm run build
 ```
 
-The build should produce the `dist` assets consumed by the Worker.
+After the Web build completes, it should generate the `dist` content required by Worker Assets.
 
 ---
 
-# 9. GitHub Actions deployment
+# 9. Deploying CloudMail with GitHub Actions
 
-In the cleaned current repository, prefer one Cloudflare deployment entry point such as:
+In the cleaned-up repository, it is recommended to keep only one main Cloudflare deployment entry point, for example:
 
 ```text
 .github/workflows/cloudflare-deploy.yml
 ```
 
-It may call the reusable deployment workflow:
+The underlying workflow can continue calling a reusable workflow:
 
 ```text
 .github/workflows/_deploy-cloudflare.yml
@@ -469,7 +470,7 @@ Repository
 → Actions
 ```
 
-Add the required Secrets and Variables.
+Add the Secrets / Variables described above.
 
 Then:
 
@@ -479,23 +480,23 @@ Actions
 → Run workflow
 ```
 
-For the first deployment, use the mode that also initializes/migrates the database, for example:
+For the first deployment, use a mode that includes database initialization/migration, for example:
 
 ```text
 deploy-and-migrate
 ```
 
-For ordinary later deployments:
+For normal code updates afterward:
 
 ```text
 deploy
 ```
 
-> Workflow names may differ in forks. Follow the actual files under `.github/workflows/`, and avoid keeping multiple duplicate backend/frontend deployment wrappers that perform the same deployment.
+> If the workflow names in your Fork are slightly different, follow the actual files under `.github/workflows/`; do not keep multiple backend/frontend deployment workflows that perform exactly the same deployment.
 
 ---
 
-# 10. Manual Wrangler deployment
+# 10. Manual Deployment with Wrangler CLI
 
 If you do not use GitHub Actions:
 
@@ -516,7 +517,7 @@ pnpm run build
 cd ../mail-worker
 ```
 
-Ensure the Wrangler configuration contains:
+Make sure the Wrangler configuration contains:
 
 ```toml
 [[d1_databases]]
@@ -542,7 +543,7 @@ binding = "r2"
 bucket_name = "cloud-mail-assets"
 ```
 
-Upload secrets:
+Upload Secrets:
 
 ```bash
 pnpm wrangler secret put jwt_secret
@@ -558,15 +559,15 @@ pnpm wrangler deploy
 
 ---
 
-# 11. Initialization and database migrations
+# 11. Initialization / Database Migration
 
-Do not use a production URL containing the initialization secret, such as:
+After deployment, do not use:
 
 ```text
 GET /api/init/<secret>
 ```
 
-Use the protected header-based endpoint:
+In production, use the Header-protected endpoint:
 
 ```text
 POST /api/init
@@ -585,25 +586,25 @@ curl -fsS -X POST \
   "$BASE_URL/api/init"
 ```
 
-Expected response:
+Expected success response:
 
 ```text
 success
 ```
 
-The initialization flow is intended to cover:
+The initialization endpoint should be safe to run repeatedly and is used for:
 
-- first-time schema creation
-- database upgrades
-- security migrations
-- push-subscription schema upgrades
-- encrypted-config migration
+- Initial schema creation
+- Database version upgrades
+- Security migrations
+- Push subscription schema updates
+- Config secret encryption migration
 
-After production migrations, you can use the project's `INIT_LOCKED` maintenance policy to restrict initialization.
+After production migration is complete, you may use `INIT_LOCKED` according to your maintenance policy to restrict access to the initialization endpoint.
 
 ---
 
-# 12. Health check
+# 12. Health Check
 
 CloudMail:
 
@@ -611,7 +612,7 @@ CloudMail:
 curl -fsS https://mail.example.com/api/health
 ```
 
-A healthy result should resemble:
+A healthy response should look similar to:
 
 ```json
 {
@@ -629,10 +630,10 @@ A healthy result should resemble:
 Important:
 
 ```text
-HTTP 200 does not automatically mean ready=true.
+HTTP 200 does not mean ready=true
 ```
 
-Verify at minimum:
+Verify at least:
 
 ```text
 ready = true
@@ -644,7 +645,7 @@ initSecret = true
 
 ---
 
-# 13. Web production validation
+# 13. Web Production Validation
 
 Open:
 
@@ -652,20 +653,20 @@ Open:
 https://mail.example.com
 ```
 
-Verify:
+Check:
 
-1. Home page loads.
-2. `/login` loads.
+1. The home page loads normally.
+2. `/login` loads normally.
 3. Login succeeds.
-4. Browser console has no blocking CSP errors.
-5. `/api/*` works on the same origin.
-6. Light/Dark themes work.
-7. Iconify icons load.
-8. Cloudflare Turnstile works when enabled.
-9. Attachment upload/download works.
-10. Sending and receiving mail works.
+4. The browser F12 Console has no blocking CSP errors.
+5. `/api/*` same-origin requests work normally.
+6. Dark / Light themes work normally.
+7. Iconify icons load normally.
+8. Cloudflare Turnstile works normally when enabled.
+9. Attachment upload/download works normally.
+10. Sending/receiving mail works normally.
 
-With a strict CSP, whitelist only required origins. Do not solve errors by broadly enabling:
+If strict CSP is enabled, make sure required third-party origins are explicitly allowlisted. Do not simply add the following just to eliminate console errors:
 
 ```text
 script-src 'unsafe-inline'
@@ -674,11 +675,11 @@ connect-src https:
 
 ---
 
-# 14. iOS connection to a self-hosted CloudMail server
+# 14. Connecting iOS to a Self-Hosted CloudMail Server
 
-CF Mail iOS connects directly to the user's own CloudMail Server.
+A CloudMail Account in CF Mail iOS must connect to the user's own CloudMail Server.
 
-When adding a server, enter:
+When adding a server in iOS, enter:
 
 ```text
 Server URL:
@@ -696,16 +697,16 @@ The client appends `/api/*` itself.
 Recommended server requirements:
 
 - HTTPS
-- publicly valid certificate
-- no self-signed production certificate
-- working `/api/health`
-- successful Web login
-- initialized D1 / KV
-- existing user account
+- Publicly valid certificate
+- Do not use a self-signed certificate
+- `/api/health` is healthy
+- Web login works normally
+- D1 / KV have been initialized
+- A user account has been created
 
 ---
 
-# 15. iOS authentication flow
+# 15. iOS Login Flow
 
 Typical flow:
 
@@ -724,17 +725,17 @@ https://mail.example.com
 JWT / authenticated CloudMail session
 ```
 
-iOS consumes CloudMail APIs, not the Web page DOM.
+The iOS client uses the CloudMail API, not the Web page DOM.
 
-Web and iOS share backend business data, but they can have different client authentication behavior. Do not make iOS compatibility depend on a Web `localStorage` token.
+Web and iOS share the same backend business data, but client authentication behavior may differ. Do not try to make iOS "compatible" by modifying Web localStorage tokens.
 
 ---
 
-# 16. Push Gateway privacy architecture
+# 16. Push Gateway Privacy Architecture
 
-This is an important security boundary in the current design.
+This is an important boundary in the current version.
 
-## 16.1 What must not go to a normal CloudMail server
+## 16.1 What Should Not Happen
 
 A self-hosted CloudMail Worker should not receive:
 
@@ -745,9 +746,9 @@ APNS_TEAM_ID
 raw APNs device token
 ```
 
-Those belong only to the independent Push Gateway.
+These values belong only to the independent Push Gateway.
 
-## 16.2 Current flow
+## 16.2 Current Secure Flow
 
 ### Step 1: iOS → Gateway
 
@@ -777,7 +778,7 @@ Gateway response:
 
 iOS stores the scoped credential in Keychain.
 
-### Step 2: iOS → self-hosted CloudMail
+### Step 2: iOS → User's Self-Hosted CloudMail
 
 ```http
 POST https://mail.example.com/api/device/register
@@ -793,18 +794,18 @@ Payload:
 }
 ```
 
-This endpoint still requires normal CloudMail user authentication.
+This API still requires normal CloudMail user authentication.
 
 ### Step 3: CloudMail → Gateway
 
-When new mail arrives:
+When a new message arrives:
 
 ```http
 POST https://push.readori.com/v1/push
 Authorization: Bearer <pushSecret>
 ```
 
-Minimal event:
+CloudMail sends a minimal event:
 
 ```json
 {
@@ -816,22 +817,23 @@ Minimal event:
 
 ### Step 4: Gateway → APNs
 
-The Gateway owns the APNs provider credentials and sends the notification to Apple.
+The Gateway holds the APNs provider credentials and sends the notification to Apple.
 
-Therefore the user's CloudMail server does not need to know:
+As a result:
 
 ```text
-APNs token
-Apple .p8
-Apple Team ID
-Apple Key ID
+User's self-hosted CloudMail
+    does not know the APNs token
+    does not know the Apple .p8
+    does not know the Team ID
+    does not know the Key ID
 ```
 
-The Gateway does not need the user's CloudMail login password.
+The Gateway does not need access to the user's CloudMail login password.
 
 ---
 
-# 16.3 Official Gateway vs self-hosted Gateway
+# 16.3 Official Gateway vs Self-Hosted Gateway
 
 The official CF Mail app can currently use:
 
@@ -839,9 +841,9 @@ The official CF Mail app can currently use:
 https://push.readori.com
 ```
 
-This is the public endpoint of the hosted official Gateway.
+This is the public endpoint of the official hosted Gateway.
 
-Self-hosters have three choices:
+Self-hosters have three options:
 
 ```text
 A. Use the official Gateway
@@ -854,50 +856,51 @@ C. Disable remote push
 CFMAIL_PUSH_GATEWAY_URL=
 ```
 
-Core CloudMail mail/Web/iOS API functionality should not require a Push Gateway; the Gateway exists for the remote-notification path.
+Core CloudMail mail functionality and Web/iOS APIs should not depend on the Gateway in order to work; the Gateway is only responsible for the remote notification path.
 
-# 17. Is Push Gateway mandatory?
+# 17. Is the Push Gateway Required?
 
 No.
 
-If the user only needs:
+If a user only needs:
 
-- Web mail
+- Web Mail
 - iOS manual refresh/sync
-- mail send/receive
-- CloudMail APIs
+- Sending and receiving mail
+- CloudMail API
 
-the Push Gateway can remain disabled.
+the Push Gateway does not need to be enabled.
 
-For example:
+In that case:
 
 ```text
 CFMAIL_PUSH_GATEWAY_URL=
 ```
 
-Remote APNs push will not work, but core CloudMail functionality should remain available.
+Remote APNs push will be unavailable, but core mail functionality should continue to work.
 
 ---
 
-# 18. Public policy for the official Push Gateway
+# 18. Public Policy for the Official Push Gateway
 
-The project should explicitly document:
+The current project recommends explicitly publishing:
 
 ```text
 https://push.readori.com
 ```
 
-as the:
+as:
 
 ```text
 Official CF Mail Push Gateway
+Official hosted CF Mail Push Gateway
 ```
 
-This is a **public service endpoint**, not a secret.
+This is a **public service endpoint**, not a Secret.
 
-Ordinary self-hosters using the official CF Mail app can use this Gateway without possessing Apple's APNs provider credentials.
+Ordinary self-hosters using the official CF Mail app can use this Gateway directly without possessing Apple APNs credentials.
 
-The following values must still never be published:
+However, the following must never be published:
 
 ```text
 APNS_PRIVATE_KEY
@@ -905,7 +908,7 @@ APNS_KEY_ID
 APNS_TEAM_ID
 Cloudflare API Token
 Gateway D1 internal data
-internal administration credentials
+Any internal administration credentials
 ```
 
 Recommended public configuration:
@@ -915,23 +918,23 @@ Recommended public configuration:
 CFMAIL_PUSH_GATEWAY_URL=https://push.readori.com
 ```
 
-For a fully self-hosted setup:
+For users who want a fully self-hosted setup:
 
 ```text
 CFMAIL_PUSH_GATEWAY_URL=https://push.example.com
 ```
 
-To run CloudMail without remote push:
+For users who do not need remote push:
 
 ```text
 CFMAIL_PUSH_GATEWAY_URL=
 ```
 
-or use the explicit disabled/empty value supported by the deployment/runtime revision you are using.
+Or use the explicit disabled/empty configuration supported by the current deployment script/runtime.
 
-## Why is publishing the Gateway URL acceptable?
+## Why Can the Gateway URL Be Public?
 
-Publishing a public HTTPS API endpoint is not the same as publishing a secret.
+Because publishing an HTTPS API endpoint is different from publishing a Secret.
 
 Publishing:
 
@@ -939,163 +942,43 @@ Publishing:
 https://push.readori.com
 ```
 
-only tells clients and CloudMail where to send Gateway requests.
+only tells clients/CloudMail where Push Gateway requests should be sent.
 
-It does not disclose:
-
-- Apple `.p8`
-- Apple Team ID
-- APNs Key ID
-- Cloudflare account tokens
-- a user's CloudMail password
-- internal Gateway database credentials
-
-Security should instead rely on:
+Security comes from:
 
 - scoped `subscriptionId`
 - scoped `pushSecret`
 - API input validation
-- WAF / rate limiting
-- subscription limits
-- Queue / DLQ controls
-- redacted logging
-- keeping APNs provider credentials out of the normal CloudMail Worker
+- WAF / Rate Limit
+- D1 subscription limits
+- Queue / DLQ
+- Log redaction
+- Preventing the CloudMail Worker from holding APNs provider credentials
 
-## Recommended production controls for the official Gateway
 
-Because it is a public hosted service, production should use at least:
+# 18. Important: Official App Store iOS vs Self-Hosted Gateway
 
-- Cloudflare WAF
-- rate limiting
-- bot/abuse protection
-- per-installation/subscription limits
-- installation/source deduplication
-- Queue / DLQ alerting
-- APNs error-rate monitoring
-- device-token redaction
-- no full `pushSecret` logging
-- a separate privacy notice
-- a clear availability/support statement
+Apple Push Notification is not authorized simply because someone knows the URL.
 
-This lets the service publish its public URL while still protecting the infrastructure that is actually sensitive.
-
-# 19. Self-hosting the Push Gateway
-
-This is mainly for users who:
-
-- build their own iOS app;
-- own an Apple Developer account;
-- use their own Bundle ID;
-- want full control over APNs.
-
-Install:
-
-```bash
-cd cfmail-push-gateway
-npm install
-npm test
-```
-
-Create D1:
-
-```bash
-npx wrangler d1 create cfmail-push-gateway
-```
-
-Create Queues:
-
-```bash
-npx wrangler queues create cfmail-apns-retry
-npx wrangler queues create cfmail-apns-dead-letter
-```
-
-Apply migrations:
-
-```bash
-npm run db:migrate:remote
-```
-
-Set secrets:
-
-```bash
-npx wrangler secret put APNS_KEY_ID
-npx wrangler secret put APNS_TEAM_ID
-npx wrangler secret put APNS_PRIVATE_KEY
-```
-
-Set the user's own Bundle ID:
-
-```toml
-[vars]
-APNS_BUNDLE_ID = "com.example.cfmail"
-```
-
-Deploy:
-
-```bash
-npm run deploy
-```
-
-Route your own public domain, for example:
-
-```text
-https://push.example.com
-```
-
-Then configure CloudMail:
-
-```text
-CFMAIL_PUSH_GATEWAY_URL=https://push.example.com
-```
-
----
-
-# 20. Important: official App Store iOS vs self-hosted Gateway
-
-Apple Push Notification is not authorized merely by knowing a Gateway URL.
-
-APNs provider authentication is tied to:
+APNs provider credentials are tied to:
 
 ```text
 Apple Developer Team
 APNs Key
-Bundle ID / topic
+Bundle ID / Topic
 ```
-
-### Official App Store CF Mail
-
-Ordinary self-hosters must never receive the official app's:
-
-```text
-APNS_PRIVATE_KEY
-APNS_KEY_ID
-APNS_TEAM_ID
-```
-
-Do not place those values in the public repository or deployment guide.
-
-### User-built iOS
-
-A user can:
-
-1. switch to their own Bundle ID;
-2. sign with their own Apple Developer Team;
-3. create their own APNs Key;
-4. deploy their own `cfmail-push-gateway`;
-5. configure the iOS Gateway base URL;
-6. rebuild and sign the app.
 
 ---
 
-# 21. Push Gateway health check
+# 19. Push Gateway Health Check
 
 ```bash
 curl -fsS https://push.example.com/healthz
 ```
 
-The current Gateway health endpoint should indicate that the service is alive and can report whether the retry queue binding is present.
+The current Gateway health check should at least report that the service is healthy and can indicate whether the Retry Queue binding is available.
 
-Monitor logs for:
+Important runtime events to monitor:
 
 ```text
 push delivered
@@ -1106,73 +989,75 @@ subscription deactivated
 APNs permanent failure
 ```
 
-Also inspect:
+Also check whether:
 
 ```text
 cfmail-apns-dead-letter
 ```
 
-for messages that exhausted the retry budget.
+continues accumulating messages.
 
 ---
 
-# 22. Push reliability architecture
+# 20. Push Gateway Reliability
 
-The current Gateway design includes:
+The current architecture uses:
 
 - APNs Provider JWT caching
-- warm-isolate memory cache
+- Warm isolate memory cache
 - D1 provider-token cache
-- early provider JWT refresh
-- one forced refresh for `ExpiredProviderToken`
-- immediate first APNs attempt
-- Queue only after transient failure
-- delayed retries
+- Early Provider JWT refresh
+- One forced refresh for `ExpiredProviderToken`
+- Immediate first APNs request
+- Queue only after failure
+- Delayed retry
 - Dead Letter Queue
-- automatic invalid-device-token deactivation
+- Automatic invalid device-token deactivation
 
-Do not reintroduce a second direct APNs implementation inside `mail-worker`.
+Therefore, do not implement a second direct APNs path inside the CloudMail Worker.
 
 ---
 
-# 23. iOS push production validation
+# 21. iOS Push Production Validation
 
 Real APNs must be tested on a physical device.
 
 Recommended sequence:
 
-1. Deploy Gateway.
-2. Verify `/healthz`.
+1. Deploy the Gateway.
+2. Check `/healthz`.
 3. Deploy CloudMail.
 4. Run `POST /api/init`.
-5. Install the latest TestFlight / Release build.
-6. Sign in to a CloudMail account.
+5. Install the latest TestFlight / Release build on iOS.
+6. Log in to the CloudMail Account.
 7. Grant notification permission.
 8. iOS receives an APNs token.
-9. iOS creates a Gateway subscription.
-10. iOS registers the scoped subscription with CloudMail.
+9. iOS successfully creates a Gateway subscription.
+10. iOS successfully registers the scoped subscription with CloudMail.
 11. Send a new test email.
 12. CloudMail stores the message.
 13. CloudMail calls the Gateway.
-14. Gateway calls APNs.
-15. Test a locked-device notification.
-16. Test the foreground in-app banner.
-17. Verify the selected notification-preview mode.
+14. The Gateway calls APNs.
+15. Lock the device and verify the system notification.
+16. In the foreground, verify the CF Mail in-app banner.
+17. Verify that notification preview behavior matches the selected setting.
 
-If:
+If the system setting:
 
 ```text
 Settings → Notifications → CF Mail → Show Previews
 ```
 
-is not `Always`, iOS may intentionally hide rich content. That is not necessarily a CloudMail backend failure.
+is not set to `Always`, iOS may intentionally hide notification body content. This is not a CloudMail backend error.
 
 ---
 
-# 24. Recommended production deployment order
+# 22. Recommended Production Deployment Order
+
+Complete production sequence:
 
 ```text
-1. Fork / clone
+1. Fork / Clone
 2. Create Cloudflare D1
 3. Create KV
 4. Optionally create R2
@@ -1187,26 +1072,25 @@ is not `Always`, iOS may intentionally hide rich content. That is not necessaril
 13. Test Web login
 14. Test inbound mail
 15. Test outbound mail
-16. Add the self-hosted CloudMail server in iOS
-17. Test iOS login and sync
-18. If remote push is needed, configure the independent Gateway
+16. Add the self-hosted CloudMail Server in iOS
+17. Test iOS login / synchronization
+18. If Push is needed, configure the independent Gateway
 19. Test APNs on a physical device
 20. Check logs / Queue / DLQ
 ```
 
-For an upgrade:
+For a database upgrade:
 
 ```text
-deploy new Worker
+Deploy the new Worker
 → POST /api/init
-→ verify health
-→ verify Web
-→ verify iOS
+→ Verify health
+→ Verify Web
 ```
 
 ---
 
-# 25. Minimum post-deployment checklist
+# 23. Minimum Post-Deployment Validation Checklist
 
 ## Worker
 
@@ -1214,25 +1098,25 @@ deploy new Worker
 [ ] /api/health ready=true
 [ ] D1=true
 [ ] KV=true
-[ ] JWT Secret present
-[ ] INIT Secret present
-[ ] CONFIG_ENCRYPTION_KEY configured
+[ ] JWT Secret is valid
+[ ] INIT Secret is valid
+[ ] CONFIG_ENCRYPTION_KEY is configured
 ```
 
 ## Web
 
 ```text
-[ ] Home
+[ ] Home page
 [ ] Login
 [ ] CSP
 [ ] Turnstile
 [ ] Iconify
 [ ] Light/Dark
-[ ] Mail list
-[ ] Mail detail
+[ ] Message list
+[ ] Message detail
 [ ] Compose
 [ ] Attachments
-[ ] Admin
+[ ] Admin panel
 ```
 
 ## Mail
@@ -1249,17 +1133,17 @@ deploy new Worker
 ## iOS
 
 ```text
-[ ] HTTPS server
+[ ] HTTPS Server
 [ ] CloudMail login
 [ ] Inbox
 [ ] Sent
-[ ] Drafts
+[ ] Draft
 [ ] Compose
-[ ] Attachments
+[ ] Attachment
 [ ] Background refresh
 ```
 
-## Push, if enabled
+## Push (if enabled)
 
 ```text
 [ ] Gateway /healthz
@@ -1269,13 +1153,13 @@ deploy new Worker
 [ ] new_mail webhook
 [ ] APNs delivered
 [ ] Queue retry
-[ ] DLQ=0 in steady state
+[ ] DLQ=0 (steady state)
 [ ] Logout unregister
 ```
 
 ---
 
-# 26. Security red lines
+# 24. Security Red Lines
 
 Never commit:
 
@@ -1291,18 +1175,20 @@ Cloudflare API Token
 Apple AuthKey_*.p8
 ```
 
-Do not place these values in:
+Do not put these values:
 
-- README files;
-- screenshots;
-- GitHub Actions logs;
-- frontend `VITE_*` variables;
-- the iOS bundle;
-- public issues.
+- In the README;
+- In screenshots;
+- In GitHub Actions logs;
+- In frontend `VITE_*` environment variables;
+- In the iOS bundle;
+- In public issues.
 
 ---
 
-# 27. Final architecture
+# 25. Conclusion
+
+The recommended current CloudMail self-hosting model is:
 
 ```text
                     ┌────────────────────┐
@@ -1332,8 +1218,6 @@ Do not place these values in:
                       └────────────────────┘
 ```
 
-The key boundary is:
+The most important boundary is:
 
-> **The self-hosted CloudMail server belongs to the user; APNs provider credentials do not belong in a normal CloudMail Worker.**
->
-> Open-source self-hosting documentation may publish the official Push Gateway public service URL, but it must never publish Apple APNs provider credentials, Cloudflare tokens, Gateway internal credentials, or any other real secrets.
+> **The self-hosted CloudMail server belongs to the user; APNs Provider Credentials do not belong in a normal CloudMail Worker.**
