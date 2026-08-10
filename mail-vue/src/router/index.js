@@ -3,6 +3,7 @@ import NProgress from 'nprogress';
 import {useUiStore} from "@/store/ui.js";
 import {useSettingStore} from "@/store/setting.js";
 import {cvtR2Url} from "@/utils/convert.js";
+import { isAuthenticated } from "@/auth/session.js";
 
 const routes = [
     {
@@ -98,19 +99,19 @@ router.beforeEach((to, from, next) => {
         }, 100)
     }
 
-    const token = localStorage.getItem('token')
+    const authenticated = isAuthenticated()
 
-    if (!token && to.name !== 'login') {
+    if (!authenticated && to.name !== 'login') {
         return next({name: 'login'})
     }
 
-    if (!token && to.name === 'login') {
+    if (!authenticated && to.name === 'login') {
         loadBackground(next)
         return
     }
 
-    if (token && to.name === 'login') {
-        return next(from.path)
+    if (authenticated && to.name === 'login') {
+        return next(from.path || '/')
     }
 
     next()

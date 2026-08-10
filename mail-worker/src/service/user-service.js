@@ -70,8 +70,8 @@ const userService = {
 
 	async resetPassword(c, params, userId) {
 		const password = params?.password;
-		if (typeof password !== 'string' || password.length < 6) throw new BizError(t('pwdMinLength'), 400);
-		if (password.length > 30) throw new BizError(t('pwdLengthLimit'), 400);
+		if (typeof password !== 'string' || password.length < 10) throw new BizError(t('pwdMinLength'), 400);
+		if (password.length > 128) throw new BizError(t('pwdLengthLimit'), 400);
 		const { salt, hash } = await cryptoUtils.hashPassword(password, cryptoUtils.iterationsFromEnv(c.env));
 		const uid = toId(userId, 'userId');
 		await this.updatePasswordHash(c, uid, hash, salt);
@@ -348,8 +348,8 @@ const userService = {
 		const email = normalizeEmail(params.email);
 		const type = toId(params.type, 'type');
 		const password = params.password;
-		if (typeof password !== 'string' || password.length < 6) throw new BizError(t('pwdMinLength'), 400);
-		if (password.length > 30) throw new BizError(t('pwdLengthLimit'), 400);
+		if (typeof password !== 'string' || password.length < 10) throw new BizError(t('pwdMinLength'), 400);
+		if (password.length > 128) throw new BizError(t('pwdLengthLimit'), 400);
 
 		const configuredDomains = Array.isArray(c.env.domain)
 			? c.env.domain

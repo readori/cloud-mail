@@ -2,15 +2,21 @@ import axios from "axios";
 import router from "@/router";
 import i18n from "@/i18n/index.js";
 import {useSettingStore} from "@/store/setting.js";
+import { readCsrfToken, setAuthenticated } from "@/auth/session.js";
 
 let http = axios.create({
-    baseURL: import.meta.env.VITE_BASE_URL
+    baseURL: import.meta.env.VITE_BASE_URL,
+    withCredentials: true
 });
 
 http.interceptors.request.use(config => {
     const { lang } = useSettingStore();
-    config.headers.Authorization = `${localStorage.getItem('token')}`
     config.headers['accept-language'] = lang
+    config.headers['X-CFMail-Web'] = '1'
+    if (['post', 'put', 'patch', 'delete'].includes(String(config.method || '').toLowerCase())) {
+        const csrf = readCsrfToken()
+        if (csrf) config.headers['X-CSRF-Token'] = csrf
+    }
     return config
 })
 
@@ -33,7 +39,7 @@ http.interceptors.response.use((res) => {
                     grouping: true,
                     repeatNum: -4,
                 })
-                localStorage.removeItem('token')
+                setAuthenticated(false)
                 router.replace('/login')
                 reject(data)
             } else if (data.code === 403) {
@@ -48,7 +54,6 @@ http.interceptors.response.use((res) => {
 
             } else if (data.code === 502) {
                 ElMessage({
-                    dangerouslyUseHTMLString: true,
                     message: data.message,
                     type: 'error',
                     plain: true,

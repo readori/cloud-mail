@@ -34,9 +34,11 @@
 
 > - **Enhanced Cloud Mail Backend: Improvements to Email APIs, CC/BCC, notifications, and security.
 
-> - **New Feature: Added support for the CF Mail iOS client.
+> - ** New Feature: Added support for the CF Mail iOS client.
 > - 
-> - **- [CloudMail Deployment Guide](https://cfmail.readori.com/cloudmail-cloudflare-deploy-guide)<br>
+> - ** [CloudMail Deployment Guide](https://cfmail.readori.com/cloudmail-cloudflare-deploy-guide)<br>
+
+> - ** <a href="/doc/CloudMail-Self-Hosting-Deployment-Guide-EN.md" style="margin-left: 5px"> CloudMail-Self-Hosting-Deployment </a>
 
 ## Description
 With only one domain, you can create multiple different email addresses, similar to major email platforms. This project can be deployed on Cloudflare Workers to reduce server costs and build your own email service.

@@ -1,9 +1,24 @@
 import { Hono } from 'hono';
 import result from '../model/result';
+import { authSessionHeaders } from '../security/auth-session';
 
 const app = new Hono();
-const ALLOW_HEADERS = 'Authorization, Content-Type, Accept-Language, X-Init-Secret, Svix-Id, Svix-Timestamp, Svix-Signature';
+const ALLOW_HEADERS = `Authorization, Content-Type, Accept-Language, X-Init-Secret, ${authSessionHeaders.web}, ${authSessionHeaders.csrf}, Svix-Id, Svix-Timestamp, Svix-Signature`;
 const ALLOW_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
+
+const CONTENT_SECURITY_POLICY = [
+	"default-src 'self'",
+	"script-src 'self' https://challenges.cloudflare.com",
+	"style-src 'self' 'unsafe-inline'",
+	"font-src 'self' data:",
+	"img-src 'self' data: blob: https:",
+	"connect-src 'self' https://challenges.cloudflare.com",
+	"frame-src https://challenges.cloudflare.com",
+	"object-src 'none'",
+	"base-uri 'none'",
+	"frame-ancestors 'none'",
+	"form-action 'self'"
+].join('; ');
 
 function allowedOrigins(c) {
 	return String(c.env?.cors_origins || '')
@@ -30,6 +45,7 @@ app.use('*', async (c, next) => {
 	c.header('Referrer-Policy', 'no-referrer');
 	c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
 	c.header('Cache-Control', 'no-store');
+	c.header('Content-Security-Policy', CONTENT_SECURITY_POLICY);
 
 	const contentLength = Number(c.req.header('Content-Length') || 0);
 	if (Number.isFinite(contentLength) && contentLength > 40 * 1024 * 1024) return c.json(result.fail('请求体不能超过40MB', 413), 413);
@@ -40,6 +56,7 @@ app.use('*', async (c, next) => {
 		c.header('Vary', 'Origin');
 		c.header('Access-Control-Allow-Headers', ALLOW_HEADERS);
 		c.header('Access-Control-Allow-Methods', ALLOW_METHODS);
+		c.header('Access-Control-Allow-Credentials', 'true');
 		c.header('Access-Control-Max-Age', '86400');
 	}
 

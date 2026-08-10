@@ -4,9 +4,12 @@ import { emailConst } from '../const/entity-const';
 import rateLimitService from '../service/rate-limit-service';
 
 const dbInit = {
-	async init(c, suppliedSecret, legacy = false) {
-		// GET /init/:secret 与 POST /init 共用同一个独立初始化密钥。
-		// 不再回退使用 JWT 密钥，避免扩大 JWT_SECRET 的暴露范围。
+	async init(c, suppliedSecret) {
+		// POST /init accepts the dedicated initialization secret only via X-Init-Secret.
+		// It never falls back to JWT_SECRET and never accepts a secret in the URL.
+		if (this.isLocked(c.env?.init_locked)) {
+			return c.text('Database initialization is locked', 423);
+		}
 		const expectedSecret = c.env.init_secret;
 		if (typeof expectedSecret !== 'string' || expectedSecret.length < 32) {
 			return c.text('Init secret is missing or too short', 503);
@@ -44,8 +47,15 @@ const dbInit = {
 		await this.v3_5DB(c);
 		await this.v3_6DB(c);
 		await this.v3_7DB(c);
+		await this.v3_8DB(c);
+		// Encrypt legacy integration secrets and re-wrap values encrypted with the previous key.
+		await settingService.migrateSecrets(c);
 		await settingService.refresh(c);
 		return c.text('success');
+	},
+
+	isLocked(value) {
+		return ['true', '1', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
 	},
 
 	safeEqual(left, right) {
@@ -53,6 +63,25 @@ const dbInit = {
 		let diff = 0;
 		for (let index = 0; index < left.length; index += 1) diff |= left.charCodeAt(index) ^ right.charCodeAt(index);
 		return diff === 0;
+	},
+
+
+	async v3_8DB(c) {
+		// Atomic security rate-limit buckets. D1 provides a single-statement increment so
+		// concurrent login/register attempts cannot bypass a KV read-modify-write race.
+		const statements = [
+			`CREATE TABLE IF NOT EXISTS rate_limit_bucket (
+				bucket_key TEXT PRIMARY KEY,
+				count INTEGER NOT NULL DEFAULT 0,
+				expires_at INTEGER NOT NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_rate_limit_expires ON rate_limit_bucket(expires_at)`,
+			`DELETE FROM rate_limit_bucket WHERE expires_at < CAST(strftime('%s','now') AS INTEGER)`
+		];
+		for (const statement of statements) {
+			try { await c.env.db.prepare(statement).run(); }
+			catch (error) { console.warn(`跳过原子限流迁移：${error.message}`); }
+		}
 	},
 
 

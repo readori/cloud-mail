@@ -157,6 +157,7 @@ import {useSettingStore} from "@/store/setting.js";
 import {useAccountStore} from "@/store/account.js";
 import {useUserStore} from "@/store/user.js";
 import {useUiStore} from "@/store/ui.js";
+import { setAuthenticated } from "@/auth/session.js";
 import {Icon} from "@iconify/vue";
 import {cvtR2Url} from "@/utils/convert.js";
 import {loginUserInfo} from "@/request/my.js";
@@ -299,7 +300,7 @@ async function linuxDoGetUser() {
       bindForm.oauthUserId = data.userInfo.oauthUserId;
       bindForm.bindToken = data.bindToken || '';
 
-      if (!data.token) {
+      if (!data.authenticated && !data.token) {
         showBindForm.value = true
         oauthLoading.value = false
         ElMessage({
@@ -311,7 +312,7 @@ async function linuxDoGetUser() {
         return;
       }
 
-      saveToken(data.token);
+      finishWebSession();
     }).catch(() => {
       oauthLoading.value = false
     })
@@ -372,7 +373,7 @@ function bind() {
 
   bindLoading.value = true
   oauthBindUser(form).then(data => {
-    saveToken(data.token)
+    finishWebSession()
   }).catch(() => {
     bindLoading.value = false
   })
@@ -411,14 +412,14 @@ const submit = () => {
 
   loginLoading.value = true
   login(email, form.password).then(async data => {
-    await saveToken(data.token)
+    await finishWebSession()
   }).finally(() => {
     loginLoading.value = false
   })
 }
 
-async function saveToken(token) {
-  localStorage.setItem('token', token)
+async function finishWebSession() {
+  setAuthenticated(true)
   refreshWebsiteConfig()
   const user = await loginUserInfo();
   accountStore.currentAccountId = user.account.accountId;
@@ -490,7 +491,7 @@ function submitRegister() {
     return
   }
 
-  if (registerForm.password.length < 6) {
+  if (registerForm.password.length < 10) {
     ElMessage({
       message: t('pwdLengthMsg'),
       type: 'error',

@@ -93,6 +93,7 @@
   </div>
 </template>
 <script setup>
+import { setAuthenticated } from "@/auth/session.js";
 import tinyEditor from '@/components/tiny-editor/index.vue'
 import {h, nextTick, onMounted, onUnmounted, reactive, ref, toRaw, computed} from "vue";
 import {Icon} from "@iconify/vue";
@@ -341,7 +342,6 @@ async function sendEmail() {
 
   percentMessage = ElMessage({
     message: () => h(sendPercent, {value: percent.value, desc: t('sending')}),
-    dangerouslyUseHTMLString: true,
     plain: true,
     duration: 0,
     customClass: 'message-bottom'
@@ -387,7 +387,7 @@ async function sendEmail() {
       position: 'bottom-right'
     })
     if (e.code === 401) {
-      localStorage.removeItem('token');
+      setAuthenticated(false);
       router.replace('/login');
     }
     show.value = true

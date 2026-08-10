@@ -20,10 +20,12 @@ import settingService from './setting-service';
 import rateLimitService from './rate-limit-service';
 import { normalizeEmail, parseBooleanEnv, toTrimmedString } from '../utils/input-utils';
 
-function validatePassword(password) {
-	if (typeof password !== 'string') throw new BizError(t('emailAndPwdEmpty'), 400);
-	if (password.length < 6) throw new BizError(t('pwdMinLength'), 400);
-	if (password.length > 30) throw new BizError(t('pwdLengthLimit'), 400);
+function validatePassword(password, { allowLegacy = false } = {}) {
+	if (typeof password !== 'string' || password.length === 0) throw new BizError(t('emailAndPwdEmpty'), 400);
+	// Existing CloudMail users may still have a 6–9 character password created by 3.0.0.
+	// They must remain able to log in; the stronger minimum applies only to new/reset passwords.
+	if (!allowLegacy && password.length < 10) throw new BizError(t('pwdMinLength'), 400);
+	if (password.length > 128) throw new BizError(t('pwdLengthLimit'), 400);
 	return password;
 }
 
@@ -177,7 +179,7 @@ const loginService = {
 		});
 
 		const email = normalizeEmail(params.email);
-		const password = noVerifyPwd ? null : validatePassword(params.password);
+		const password = noVerifyPwd ? null : validatePassword(params.password, { allowLegacy: true });
 		const userRow = await userService.selectByEmailIncludeDel(c, email);
 		if (!userRow) throw new BizError(t('notExistUser'));
 		if (userRow.isDel === isDel.DELETE) throw new BizError(t('isDelUser'));

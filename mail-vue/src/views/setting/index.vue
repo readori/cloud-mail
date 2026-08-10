@@ -61,6 +61,7 @@
   </div>
 </template>
 <script setup>
+import { setAuthenticated } from "@/auth/session.js";
 import {reactive, ref, defineOptions} from 'vue'
 import {resetPassword, userDelete} from "@/request/my.js";
 import {useUserStore} from "@/store/user.js";
@@ -146,7 +147,7 @@ const deleteConfirm = () => {
     type: 'warning'
   }).then(() => {
     userDelete().then(() => {
-      localStorage.removeItem('token');
+      setAuthenticated(false);
       router.replace('/login');
       ElMessage({
         message: t('delSuccessMsg'),
@@ -169,7 +170,7 @@ function submitPwd() {
     return
   }
 
-  if (form.password.length < 6) {
+  if (form.password.length < 10) {
     ElMessage({
       message: t('pwdLengthMsg'),
       type: 'error',

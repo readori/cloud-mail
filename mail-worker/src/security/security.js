@@ -7,6 +7,7 @@ import userService from '../service/user-service';
 import permService from '../service/perm-service';
 import { t } from '../i18n/i18n';
 import app from '../hono/hono';
+import { assertCookieCsrf, clearWebSession, getAuthToken } from './auth-session';
 
 const publicRoutes = [
 	['GET', '/health'],
@@ -15,6 +16,7 @@ const publicRoutes = [
 	['GET', '/setting/websiteConfig'],
 	['POST', '/webhooks'],
 	['POST', '/init'],
+	// Public only as a 410 Gone tombstone. The route handler never reads the legacy path secret.
 	['GET', /^\/init\/[^/]+$/],
 	['POST', '/public/genToken'],
 	['GET', /^\/telegram\/getEmail\/[^/]+$/],
@@ -92,15 +94,30 @@ app.use('*', async (c, next) => {
 		return next();
 	}
 
-	const jwt = c.req.header(constant.TOKEN_HEADER);
-	const tokenPayload = await jwtUtils.verifyToken(c, jwt);
+	const auth = getAuthToken(c);
+	if (!assertCookieCsrf(c, request => {
+		const origin = request.req.header('Origin');
+		if (origin) {
+			try {
+				const ownOrigin = new URL(request.req.url).origin;
+				if (origin === ownOrigin) return true;
+				const configured = String(request.env?.cors_origins || '').split(',').map(v => v.trim()).filter(Boolean);
+				return configured.includes(origin);
+			} catch { return false; }
+		}
+		return request.req.header('Sec-Fetch-Site') !== 'cross-site';
+	})) throw new BizError('CSRF validation failed', 403);
+
+	const tokenPayload = await jwtUtils.verifyToken(c, auth.token);
 	if (!tokenPayload || !Number.isSafeInteger(Number(tokenPayload.userId)) || typeof tokenPayload.token !== 'string') {
+		if (auth.source === 'cookie') clearWebSession(c);
 		throw new BizError(t('authExpired'), 401);
 	}
 
 	const userId = Number(tokenPayload.userId);
 	const authInfo = await c.env.kv.get(KvConst.AUTH_INFO + userId, { type: 'json' });
 	if (!authInfo || !authInfo.user || !Array.isArray(authInfo.tokens) || !authInfo.tokens.includes(tokenPayload.token)) {
+		if (auth.source === 'cookie') clearWebSession(c);
 		throw new BizError(t('authExpired'), 401);
 	}
 
@@ -125,5 +142,7 @@ app.use('*', async (c, next) => {
 	}
 
 	c.set('user', authInfo.user);
+	c.set('authToken', auth.token);
+	c.set('authSource', auth.source);
 	return next();
 });

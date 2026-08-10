@@ -6,7 +6,8 @@ app.get('/health', (c) => {
 		d1: Boolean(c.env?.db && typeof c.env.db.prepare === 'function'),
 		kv: Boolean(c.env?.kv && typeof c.env.kv.get === 'function' && typeof c.env.kv.put === 'function'),
 		jwtSecret: typeof c.env?.jwt_secret === 'string' && c.env.jwt_secret.length >= 32,
-		initSecret: typeof c.env?.init_secret === 'string' && c.env.init_secret.length >= 32
+		initSecret: typeof c.env?.init_secret === 'string' && c.env.init_secret.length >= 32,
+		configEncryptionKey: typeof c.env?.config_encryption_key === 'string' && c.env.config_encryption_key.length >= 32
 	};
 	return c.json({
 		status: 'ok',
@@ -20,6 +21,8 @@ app.post('/init', async (c) => {
 	return dbInit.init(c, c.req.header('X-Init-Secret'));
 });
 
-app.get('/init/:secret', async (c) => {
-	return dbInit.init(c, c.req.param('secret'), true);
+// Security tombstone for pre-hardening clients/bookmarks. Never read or compare the path
+// segment: secrets in URLs can be captured by browser history, proxies, analytics or logs.
+app.get('/init/:secret', (c) => {
+	return c.text('Legacy initialization URL retired. Use POST /api/init with X-Init-Secret.', 410);
 });

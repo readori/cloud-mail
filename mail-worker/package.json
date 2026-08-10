@@ -12,7 +12,13 @@
     "email:list:test": "node --experimental-default-type=module scripts/email-list-contract-test.mjs",
     "telegram:test": "node --experimental-default-type=module scripts/telegram-forward-contract-test.mjs",
     "push:contract-test": "node scripts/push-webhook-contract-test.mjs",
-    "rich-email:test": "node scripts/rich-email-sanitizer-contract-test.mjs"
+    "rich-email:test": "node scripts/rich-email-sanitizer-contract-test.mjs",
+    "init:security-test": "node scripts/init-security-contract-test.mjs",
+    "config-secret:test": "node scripts/config-secret-crypto-test.mjs",
+    "web-session:test": "node scripts/web-session-security-contract-test.mjs",
+    "secret-storage:test": "node scripts/secret-storage-contract-test.mjs",
+    "runtime:test": "vitest run",
+    "health:test": "node scripts/health-smoke.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.7.5",

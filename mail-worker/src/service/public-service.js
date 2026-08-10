@@ -99,8 +99,8 @@ const publicService = {
 
 			const password = source.password === undefined || source.password === null || source.password === ''
 				? cryptoUtils.genRandomPwd()
-				: toTrimmedString(source.password, { name: '密码', required: true, max: 30 });
-			if (password.length < 6) throw new BizError(t('pwdMinLength'), 400);
+				: toTrimmedString(source.password, { name: '密码', required: true, max: 128 });
+			if (password.length < 10) throw new BizError(t('pwdMinLength'), 400);
 			const roleName = toTrimmedString(source.roleName, { name: '角色名称', max: 100 });
 			const selectedRole = roleName ? roleByName.get(roleName) : defaultRole;
 			if (!selectedRole) throw new BizError(`角色不存在: ${roleName}`, 400);
@@ -148,7 +148,7 @@ const publicService = {
 
 	async verifyUser(c, params = {}) {
 		const email = normalizeEmail(params.email);
-		const password = toTrimmedString(params.password, { name: '密码', required: true, max: 30 });
+		const password = toTrimmedString(params.password, { name: '密码', required: true, max: 128 });
 		if (typeof c.env.admin !== 'string' || email !== c.env.admin.toLowerCase()) throw new BizError(t('notAdmin'), 403);
 		const userRow = await userService.selectByEmailIncludeDel(c, email);
 		if (!userRow || userRow.isDel === isDel.DELETE) throw new BizError(t('notExistUser'));

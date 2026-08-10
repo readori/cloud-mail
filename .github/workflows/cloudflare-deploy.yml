@@ -1,0 +1,24 @@
+name: Deploy CloudMail to Cloudflare
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Deployment mode'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - deploy-and-migrate
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/_deploy-cloudflare.yml
+    with:
+      source: ${{ inputs.mode }}
+      initialize_database: ${{ inputs.mode == 'deploy-and-migrate' }}
+    secrets: inherit

@@ -234,6 +234,7 @@
 </template>
 
 <script setup>
+import { emailHtmlToText } from "@/utils/safe-html.js";
 import {Icon} from "@iconify/vue";
 import skeletonBlock from "@/components/email-scroll/skeleton/index.vue"
 import {computed, onActivated, reactive, ref, watch, nextTick, onMounted, onUnmounted } from "vue";
@@ -552,27 +553,9 @@ const accountShow = computed(() => {
 })
 
 function htmlToText(email) {
-  if (email.content) {
-
-    const tempDiv = document.createElement('div');
-
-    tempDiv.innerHTML = email.content.replace(
-        /<(img|iframe|object|embed|video|audio|source|link)[^>]*>/gi, ''
-    );
-
-    const scriptsAndStyles = tempDiv.querySelectorAll('script, style, title');
-    scriptsAndStyles.forEach(el => el.remove());
-    let text = tempDiv.textContent || tempDiv.innerText || '';
-    text = text.replace(/\s+/g, ' ').trim();
-    return cleanSpace(text)
-  }
-
-  if (email.text) {
-    return cleanSpace(email.text)
-  } else {
-    return ''
-  }
-
+  if (email.content) return cleanSpace(emailHtmlToText(email.content))
+  if (email.text) return cleanSpace(email.text)
+  return ''
 }
 
 function cleanSpace(text) {

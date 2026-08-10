@@ -1,0 +1,21 @@
+name = "cloud-mail-vitest"
+main = "src/index.js"
+compatibility_date = "2025-06-04"
+
+[[d1_databases]]
+binding = "db"
+database_name = "cloud-mail-vitest"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[kv_namespaces]]
+binding = "kv"
+id = "00000000000000000000000000000000"
+
+[vars]
+domain = ["example.com"]
+admin = "admin@example.com"
+cors_origins = "http://localhost"
+jwt_secret = "vitest-jwt-secret-32-characters-minimum-value"
+init_secret = "vitest-init-secret-32-characters-minimum-value"
+config_encryption_key = "vitest-config-key-32-characters-minimum-value"
+password_pbkdf2_iterations = 150000

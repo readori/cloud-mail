@@ -34,7 +34,7 @@
 > - **增强 Cloud Mail 后端**: 邮件 API、CC/BCC、通知与安全性改进
 > - **新功能**: 适配iOS客户端 CF Mail
 > - **[CloudMail 部署文档](https://cfmail.readori.com/cloudmail-cloudflare-deploy-guide)
-
+> - ** <a href="/doc/CloudMail-Self-Hosting-Deployment-Guide-ZH.md" style="margin-left: 5px"> CloudMail邮箱自建教程 </a>
 ## 项目简介
 
 只需要一个域名，就可以创建多个不同的邮箱，类似各大邮箱平台，本项目支持署到 Cloudflare Workers ，降低服务器成本，搭建自己的邮箱服务

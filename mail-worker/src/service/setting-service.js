@@ -4,7 +4,8 @@ import orm from '../entity/orm';
 import { verifyRecordType } from '../const/entity-const';
 import fileUtils from '../utils/file-utils';
 import r2Service from './r2-service';
-import constant from '../const/constant';
+import { getAuthToken } from '../security/auth-session';
+import { decryptSettingSecrets, encryptConfigSecret, encryptSettingSecrets, hasUnprotectedSettingSecrets } from '../utils/config-secret-crypto';
 import BizError from '../error/biz-error';
 import { t } from '../i18n/i18n';
 import verifyRecordService from './verify-record-service';
@@ -37,7 +38,7 @@ const BINARY_KEYS = new Set([
 	'ruleType', 'notice', 'noRecipient', 'loginDomain', 'forcePathStyle', 'aiCode'
 ]);
 const TRISTATE_KEYS = new Set(['addEmailVerify', 'registerVerify', 'regKey']);
-const SECRET_KEYS = new Set(['secretKey', 'siteKey', 'tgBotToken', 's3AccessKey', 's3SecretKey']);
+const SECRET_KEYS = new Set(['secretKey', 'tgBotToken', 's3AccessKey', 's3SecretKey']);
 const LIST_TEXT_KEYS = new Set([
 	'tgChatId', 'forwardEmail', 'ruleEmail', 'emailPrefixFilter', 'blackSubject', 'blackContent',
 	'blackFrom', 'aiCodeFilter'
@@ -97,7 +98,7 @@ function parseDomains(c) {
 }
 
 async function hasAuthenticatedSession(c) {
-	const payload = await jwtUtils.verifyToken(c, c.req.header(constant.TOKEN_HEADER));
+	const payload = await jwtUtils.verifyToken(c, getAuthToken(c).token);
 	if (!payload || !payload.userId || !payload.token) return false;
 	const authInfo = await c.env.kv.get(KvConst.AUTH_INFO + payload.userId, { type: 'json' });
 	return !!authInfo && Array.isArray(authInfo.tokens) && authInfo.tokens.includes(payload.token);
@@ -149,24 +150,62 @@ function normalizeSettingValue(key, value) {
 }
 
 const settingService = {
-	async refresh(c) {
+	async migrateSecrets(c) {
 		const row = await orm(c).select().from(setting).get();
-		if (!row) throw new BizError('数据库未初始化 Database not initialized.');
+		if (!row) return;
+		const normalized = { ...row, resendTokens: String(row.resendTokens || '{}') };
+		let protectedResult;
+		try {
+			protectedResult = await encryptSettingSecrets(c.env, normalized);
+		} catch (error) {
+			throw new BizError(`动态配置密钥迁移失败: ${error?.message || 'CONFIG_ENCRYPTION_KEY 无效'}`, 503);
+		}
+		const { row: protectedRow, changed } = protectedResult;
+		if (!changed) return;
+		await orm(c).update(setting).set({
+			secretKey: protectedRow.secretKey,
+			tgBotToken: protectedRow.tgBotToken,
+			resendTokens: protectedRow.resendTokens,
+			s3AccessKey: protectedRow.s3AccessKey,
+			s3SecretKey: protectedRow.s3SecretKey
+		}).run();
+	},
+
+	async refresh(c) {
+		await this.migrateSecrets(c);
+		const storageRow = await orm(c).select().from(setting).get();
+		if (!storageRow) throw new BizError('数据库未初始化 Database not initialized.');
+		// KV stores the same encrypted envelopes as D1. Plaintext exists only in request memory.
+		await c.env.kv.put(KvConst.SETTING, JSON.stringify(storageRow));
+		const row = await decryptSettingSecrets(c.env, storageRow);
 		row.resendTokens = safeJsonParse(row.resendTokens, {});
 		if (!row.resendTokens || typeof row.resendTokens !== 'object' || Array.isArray(row.resendTokens)) row.resendTokens = {};
 		c.set?.('setting', clone(row));
-		await c.env.kv.put(KvConst.SETTING, JSON.stringify(row));
 		return row;
 	},
 
 	async query(c) {
 		let cached = c.get?.('setting');
-		if (!cached) cached = await c.env.kv.get(KvConst.SETTING, { type: 'json' });
-		if (!cached) throw new BizError('数据库未初始化 Database not initialized.');
-		const row = clone(cached);
-		row.resendTokens = row.resendTokens && typeof row.resendTokens === 'object' && !Array.isArray(row.resendTokens)
-			? row.resendTokens
-			: safeJsonParse(row.resendTokens, {});
+		if (cached) {
+			const row = clone(cached);
+			row.domainList = parseDomains(c).map(item => `@${item}`);
+			row.projectLink = parseBooleanEnv(c.env.project_link, true);
+			row.linuxdoClientId = c.env.linuxdo_client_id || '';
+			row.linuxdoCallbackUrl = c.env.linuxdo_callback_url || '';
+			row.linuxdoSwitch = parseBooleanEnv(c.env.linuxdo_switch, false);
+			row.emailPrefixFilter = String(row.emailPrefixFilter || '').split(',').map(item => item.trim().toLowerCase()).filter(Boolean);
+			return row;
+		}
+		const encrypted = await c.env.kv.get(KvConst.SETTING, { type: 'json' });
+		if (!encrypted) throw new BizError('数据库未初始化 Database not initialized.');
+		if (hasUnprotectedSettingSecrets(encrypted)) {
+			// Upgrade legacy plaintext D1/KV immediately instead of serving it until the next manual init.
+			await this.refresh(c);
+			return this.query(c);
+		}
+		const row = await decryptSettingSecrets(c.env, encrypted);
+		row.resendTokens = safeJsonParse(row.resendTokens, {});
+		if (!row.resendTokens || typeof row.resendTokens !== 'object' || Array.isArray(row.resendTokens)) row.resendTokens = {};
 		row.domainList = parseDomains(c).map(item => `@${item}`);
 		row.projectLink = parseBooleanEnv(c.env.project_link, true);
 		row.linuxdoClientId = c.env.linuxdo_client_id || '';
@@ -214,6 +253,16 @@ const settingService = {
 			update.resendTokens = JSON.stringify(normalizeResendTokens(current.resendTokens, params.resendTokens));
 		}
 		if (Object.keys(update).length === 0) return;
+		for (const key of ['secretKey', 'tgBotToken', 'resendTokens', 's3AccessKey', 's3SecretKey']) {
+			if (!Object.prototype.hasOwnProperty.call(update, key)) continue;
+			const value = String(update[key] ?? '');
+			if (!value) { update[key] = ''; continue; }
+			try {
+				update[key] = await encryptConfigSecret(c.env.config_encryption_key, key, value);
+			} catch (error) {
+				throw new BizError(`无法保存敏感配置 ${key}: ${error?.message || 'CONFIG_ENCRYPTION_KEY 无效'}`, 503);
+			}
+		}
 		await orm(c).update(setting).set(update).run();
 		await this.refresh(c);
 	},

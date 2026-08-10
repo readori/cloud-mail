@@ -32,6 +32,9 @@ jobs:
       ADMIN: ${{ secrets.ADMIN || vars.ADMIN }}
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
       INIT_SECRET: ${{ secrets.INIT_SECRET }}
+      CONFIG_ENCRYPTION_KEY: ${{ secrets.CONFIG_ENCRYPTION_KEY }}
+      CONFIG_ENCRYPTION_KEY_PREVIOUS: ${{ secrets.CONFIG_ENCRYPTION_KEY_PREVIOUS }}
+      INIT_LOCKED: ${{ secrets.INIT_LOCKED || vars.INIT_LOCKED || 'false' }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID || vars.D1_DATABASE_ID }}
@@ -41,8 +44,8 @@ jobs:
       AI_MODEL: ${{ secrets.AI_MODEL || vars.AI_MODEL || '@cf/meta/llama-3.1-8b-instruct' }}
       CLOUDFLARE_EMAIL: ${{ secrets.CF_EMAIL || vars.CF_EMAIL || 'false' }}
       ANALYSIS_CACHE: ${{ secrets.ANALYSIS_CACHE || vars.ANALYSIS_CACHE || 'false' }}
-      PASSWORD_PBKDF2_ITERATIONS: ${{ secrets.PASSWORD_PBKDF2_ITERATIONS || vars.PASSWORD_PBKDF2_ITERATIONS || '20000' }}
-      PASSWORD_REHASH_ON_LOGIN: ${{ secrets.PASSWORD_REHASH_ON_LOGIN || vars.PASSWORD_REHASH_ON_LOGIN || 'false' }}
+      PASSWORD_PBKDF2_ITERATIONS: ${{ secrets.PASSWORD_PBKDF2_ITERATIONS || vars.PASSWORD_PBKDF2_ITERATIONS || '150000' }}
+      PASSWORD_REHASH_ON_LOGIN: ${{ secrets.PASSWORD_REHASH_ON_LOGIN || vars.PASSWORD_REHASH_ON_LOGIN || 'true' }}
       LINUXDO_CLIENT_ID: ${{ secrets.LINUXDO_CLIENT_ID || vars.LINUXDO_CLIENT_ID }}
       LINUXDO_CLIENT_SECRET: ${{ secrets.LINUXDO_CLIENT_SECRET }}
       LINUXDO_CALLBACK_URL: ${{ secrets.LINUXDO_CALLBACK_URL || vars.LINUXDO_CALLBACK_URL }}
@@ -128,7 +131,7 @@ jobs:
 
           required = [
               "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID",
-              "JWT_SECRET", "INIT_SECRET", "DOMAIN", "ADMIN"
+              "JWT_SECRET", "INIT_SECRET", "CONFIG_ENCRYPTION_KEY", "DOMAIN", "ADMIN"
           ]
           missing = [name for name in required if not os.environ.get(name, "").strip()]
           if missing:
@@ -136,11 +139,12 @@ jobs:
 
           jwt_secret = os.environ["JWT_SECRET"]
           init_secret = os.environ["INIT_SECRET"]
-          if len(jwt_secret) < 32 or len(init_secret) < 32:
-              raise SystemExit("::error::JWT_SECRET and INIT_SECRET must each contain at least 32 characters")
-          if jwt_secret == init_secret:
-              raise SystemExit("::error::JWT_SECRET and INIT_SECRET must be different values")
-          if any(ch in jwt_secret + init_secret for ch in "\r\n"):
+          config_key = os.environ["CONFIG_ENCRYPTION_KEY"]
+          if len(jwt_secret) < 32 or len(init_secret) < 32 or len(config_key) < 32:
+              raise SystemExit("::error::JWT_SECRET, INIT_SECRET and CONFIG_ENCRYPTION_KEY must each contain at least 32 characters")
+          if len({jwt_secret, init_secret, config_key}) != 3:
+              raise SystemExit("::error::JWT_SECRET, INIT_SECRET and CONFIG_ENCRYPTION_KEY must be different values")
+          if any(ch in jwt_secret + init_secret + config_key for ch in "\r\n"):
               raise SystemExit("::error::Secrets must be single-line values")
 
           try:
@@ -178,11 +182,17 @@ jobs:
         run: |
           pnpm run security:test
           pnpm run security:migration-test
+          pnpm run config-secret:test
+          pnpm run web-session:test
+          pnpm run secret-storage:test
+          pnpm run rich-email:test
           pnpm run email:list:test
 
-      - name: Run frontend API contract tests
+      - name: Run frontend security and API contract tests
         working-directory: mail-vue
-        run: pnpm run contract:test
+        run: |
+          pnpm run security:test
+          pnpm run contract:test
 
       - name: Build frontend assets
         working-directory: mail-vue
@@ -318,8 +328,9 @@ jobs:
               '[vars]',
               f'ai_model = {toml_string(os.environ.get("AI_MODEL", ""))}',
               f'analysis_cache = {str(as_bool("ANALYSIS_CACHE")).lower()}',
-              f'password_pbkdf2_iterations = {max(10000, min(int(os.environ.get("PASSWORD_PBKDF2_ITERATIONS", "20000")), 2000000))}',
+              f'password_pbkdf2_iterations = {max(100000, min(int(os.environ.get("PASSWORD_PBKDF2_ITERATIONS", "150000")), 2000000))}',
               f'password_rehash_on_login = {str(as_bool("PASSWORD_REHASH_ON_LOGIN")).lower()}',
+              f'init_locked = {str(as_bool("INIT_LOCKED")).lower()}',
               f'domain = {json.dumps(domains, ensure_ascii=False)}',
               f'admin = {toml_string(os.environ["ADMIN"].strip())}',
               f'project_link = {toml_string(os.environ.get("PROJECT_LINK", "").strip())}',
@@ -355,10 +366,12 @@ jobs:
           required = {
               "jwt_secret": os.environ["JWT_SECRET"],
               "init_secret": os.environ["INIT_SECRET"],
+              "config_encryption_key": os.environ["CONFIG_ENCRYPTION_KEY"],
           }
           optional = {
               "linuxdo_client_secret": os.environ.get("LINUXDO_CLIENT_SECRET", ""),
               "resend_webhook_secret": os.environ.get("RESEND_WEBHOOK_SECRET", ""),
+              "config_encryption_key_previous": os.environ.get("CONFIG_ENCRYPTION_KEY_PREVIOUS", ""),
           }
           payload = {**required, **{k: v for k, v in optional.items() if v}}
           path = Path(".wrangler-ci-secrets.json")
@@ -411,6 +424,13 @@ jobs:
           DEPLOYED_WORKER_URL: ${{ steps.deploy.outputs.worker_url }}
         run: |
           set -euo pipefail
+
+          case "${INIT_LOCKED:-false}" in
+            true|TRUE|1|yes|YES|on|ON)
+              echo '::error::INIT_LOCKED is enabled. Open an explicit maintenance window (set INIT_LOCKED=false) before running migrations.'
+              exit 78
+              ;;
+          esac
 
           # 自定义域名绑定在刚发布后可能需要几十秒传播。不要只依赖 CUSTOM_DOMAIN；
           # 优先使用 workers.dev，失败后再回退到自定义域名，并对传播延迟进行重试。
@@ -503,6 +523,38 @@ jobs:
             cat init-diagnostics.txt
             exit 1
           fi
+
+      - name: Post-deploy readiness gate
+        shell: bash
+        env:
+          DEPLOYED_WORKER_URL: ${{ steps.deploy.outputs.worker_url }}
+        run: |
+          set -euo pipefail
+          BASE_URL="$DEPLOYED_WORKER_URL"
+          if [ -z "$BASE_URL" ] && [ -n "${CUSTOM_DOMAIN:-}" ]; then
+            BASE_URL="${CUSTOM_DOMAIN}"
+            case "$BASE_URL" in http://*|https://*) ;; *) BASE_URL="https://$BASE_URL" ;; esac
+          fi
+          if [ -z "$BASE_URL" ]; then
+            echo '::error::No deployment URL available for readiness gate'
+            exit 1
+          fi
+          ready=false
+          for attempt in $(seq 1 12); do
+            code="$(curl --silent --show-error --max-time 20 --output post-health.json --write-out '%{http_code}' "$BASE_URL/api/health" || printf '000')"
+            if [ "$code" = "200" ] && python3 -c 'import json,sys; body=json.load(open("post-health.json")); sys.exit(0 if body.get("status") == "ok" and body.get("ready") is True else 1)'
+            then
+              ready=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$ready" != true ]; then
+            echo '::error::CloudMail post-deploy readiness gate failed'
+            cat post-health.json || true
+            exit 1
+          fi
+          echo '✅ CloudMail post-deploy readiness gate passed'
 
       - name: Print deployment diagnostics on failure
         if: failure()
