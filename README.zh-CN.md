@@ -33,7 +33,7 @@
 > 本项目基于 [maillab/cloud-mail](https://github.com/maillab/cloud-mail) 修改,主要变更:
 > - **增强 Cloud Mail 后端**: 邮件 API、CC/BCC、通知与安全性改进
 > - **新功能**: 适配iOS客户端 CF Mail
-> - **[部署文档](https://cfmail.readori.com/cloudmail-cloudflare-deploy-guide)
+> - **[CloudMail 部署文档](https://cfmail.readori.com/cloudmail-cloudflare-deploy-guide)
 
 ## 项目简介
 
@@ -43,7 +43,7 @@
 
 - [在线演示](https://skymail.ink)<br>
 - [部署文档](https://doc.skymail.ink)<br>
-- [部署文档](https://cfmail.readori.com/cloudmail-cloudflare-deploy-guide)<br>
+- [CloudMail 部署文档](https://cfmail.readori.com/cloudmail-cloudflare-deploy-guide)<br>
 
 | ![](/doc/demo/demo1.png) | ![](/doc/demo/demo2.png) |
 |-----------------------|-----------------------|

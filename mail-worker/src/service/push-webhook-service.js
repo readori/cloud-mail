@@ -41,6 +41,39 @@ function cleanNotificationText(value, max) {
 		.slice(0, max);
 }
 
+function htmlToNotificationText(value, max) {
+	const text = String(value || '')
+		.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+		.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+		.replace(/<br\s*\/?\s*>/gi, ' ')
+		.replace(/<\/p\s*>/gi, ' ')
+		.replace(/<[^>]+>/g, ' ')
+		.replace(/&nbsp;/gi, ' ')
+		.replace(/&amp;/gi, '&')
+		.replace(/&lt;/gi, '<')
+		.replace(/&gt;/gi, '>')
+		.replace(/&quot;/gi, '"')
+		.replace(/&#39;/gi, "'");
+	return cleanNotificationText(text, max);
+}
+
+async function sha256Hex(value) {
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value)));
+	return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function sourceIdentityKey(c, userId) {
+	let origin = 'cloudmail';
+	try { origin = new URL(c.req.url).origin.toLowerCase(); } catch { /* Hono context always has a URL */ }
+	return `src_${await sha256Hex(`${origin}|${Number(userId || 0)}`)}`;
+}
+
+async function notificationEventKey(sourceKey, emailRow) {
+	const messageId = cleanNotificationText(emailRow?.messageId, 998);
+	const stableMessage = messageId || `email:${Number(emailRow?.emailId || 0)}`;
+	return `evt_${await sha256Hex(`${sourceKey}|${stableMessage}`)}`;
+}
+
 function notificationFields(subscription, emailRow) {
 	const mode = String(subscription?.previewMode || subscription?.preview_mode || 'privateOnly');
 	if (mode === 'privateOnly') return {};
@@ -51,7 +84,7 @@ function notificationFields(subscription, emailRow) {
 	const subject = cleanNotificationText(emailRow?.subject, 180);
 	if (mode === 'senderAndSubject') return { sender, subject };
 
-	const preview = cleanNotificationText(emailRow?.text, 240);
+	const preview = cleanNotificationText(emailRow?.text, 240) || htmlToNotificationText(emailRow?.content, 240);
 	return { sender, subject, preview };
 }
 
@@ -96,7 +129,8 @@ function isQuietHours(subscription, now = new Date()) {
 	return start < end ? (current >= start && current < end) : (current >= start || current < end);
 }
 
-function gatewayPayload(subscription, emailRow, unreadCount, event = 'new_mail') {
+function gatewayPayload(subscription, emailRow, unreadCount, event = 'new_mail', sourceKey = '', eventKey = '') {
+	const previewMode = String(subscription?.previewMode || subscription?.preview_mode || 'privateOnly');
 	return {
 		subscriptionId: String(subscription?.subscriptionId || subscription?.subscription_id || '').trim(),
 		event,
@@ -104,6 +138,9 @@ function gatewayPayload(subscription, emailRow, unreadCount, event = 'new_mail')
 		unreadCount: Math.max(0, Number(unreadCount || 0)),
 		soundEnabled: booleanPreference(subscription, 'soundEnabled', 'sound_enabled', true),
 		badgeEnabled: booleanPreference(subscription, 'badgeEnabled', 'badge_enabled', true),
+		previewMode,
+		sourceKey,
+		eventKey,
 		...notificationFields(subscription, emailRow)
 	};
 }
@@ -152,9 +189,11 @@ const pushWebhookService = {
 			if (unique.size >= 10) break;
 		}
 
+		const sourceKey = await sourceIdentityKey(c, emailRow?.userId);
+		const eventKey = await notificationEventKey(sourceKey, emailRow);
 		await Promise.all([...unique.values()].map(async item => {
 			const quiet = isQuietHours(item);
-			const payload = gatewayPayload(item, emailRow, unreadCount, quiet ? 'badge_sync' : 'new_mail');
+			const payload = gatewayPayload(item, emailRow, unreadCount, quiet ? 'badge_sync' : 'new_mail', sourceKey, eventKey);
 			if (quiet) delete payload.emailId;
 			try {
 				const result = await postGateway(base, item, payload);
@@ -176,7 +215,7 @@ const pushWebhookService = {
 		return { sent, failed, skipped: false };
 	},
 
-	async syncBadge(c, subscriptions, unreadCount) {
+	async syncBadge(c, subscriptions, unreadCount, userId = 0) {
 		const base = gatewayURL(c);
 		if (!base || !Array.isArray(subscriptions) || subscriptions.length === 0) {
 			return { sent: 0, failed: 0, skipped: true };
@@ -193,9 +232,10 @@ const pushWebhookService = {
 
 		let sent = 0;
 		let failed = 0;
+		const sourceKey = await sourceIdentityKey(c, userId);
 		await Promise.all([...unique.values()].map(async item => {
 			try {
-				const payload = gatewayPayload(item, null, count, 'badge_sync');
+				const payload = gatewayPayload(item, null, count, 'badge_sync', sourceKey, '');
 				delete payload.emailId;
 				delete payload.sender;
 				delete payload.subject;
@@ -214,4 +254,5 @@ const pushWebhookService = {
 	}
 };
 
+export { notificationFields, htmlToNotificationText };
 export default pushWebhookService;

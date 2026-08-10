@@ -43,6 +43,7 @@ const dbInit = {
 		await this.v3_4DB(c);
 		await this.v3_5DB(c);
 		await this.v3_6DB(c);
+		await this.v3_7DB(c);
 		await settingService.refresh(c);
 		return c.text('success');
 	},
@@ -52,6 +53,35 @@ const dbInit = {
 		let diff = 0;
 		for (let index = 0; index < left.length; index += 1) diff |= left.charCodeAt(index) ^ right.charCodeAt(index);
 		return diff === 0;
+	},
+
+
+	async v3_7DB(c) {
+		// Push de-duplication hardening. The stable CF Mail installation UUID is not an APNs token;
+		// it lets one CloudMail user collapse repeated local account/profile registrations from the
+		// same app installation into a single webhook destination.
+		const statements = [
+			`ALTER TABLE push_subscription ADD COLUMN installation_id TEXT NOT NULL DEFAULT ''`,
+			`DELETE FROM push_subscription
+			 WHERE account_ref != ''
+			   AND push_id NOT IN (
+				 SELECT MAX(push_id) FROM push_subscription
+				 WHERE account_ref != ''
+				 GROUP BY user_id, account_ref
+			   )`,
+			`CREATE INDEX IF NOT EXISTS idx_push_subscription_user_installation
+			 ON push_subscription(user_id, installation_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_push_subscription_user_account_ref
+			 ON push_subscription(user_id, account_ref)`
+		];
+		for (const statement of statements) {
+			try { await c.env.db.prepare(statement).run(); }
+			catch (error) {
+				if (!String(error?.message || '').toLowerCase().includes('duplicate column')) {
+					console.warn(`跳过 Push 去重迁移：${error.message}`);
+				}
+			}
+		}
 	},
 
 

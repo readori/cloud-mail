@@ -37,17 +37,40 @@ for statement in v36:
     cur.execute(statement)
 
 cur.execute("INSERT INTO push_subscription(user_id,subscription_id,push_secret,account_ref) VALUES(1,'ps_aaaaaaaaaaaaaaaaaaaa','pgs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','11111111-1111-4111-8111-111111111111')")
+cur.execute("INSERT INTO push_subscription(user_id,subscription_id,push_secret,account_ref) VALUES(1,'ps_cccccccccccccccccccc','pgs_cccccccccccccccccccccccccccccccc','11111111-1111-4111-8111-111111111111')")
 cur.execute("INSERT INTO push_subscription(user_id,subscription_id,push_secret,account_ref,preview_mode,sound_enabled,badge_enabled,quiet_hours_enabled,time_zone) VALUES(2,'ps_bbbbbbbbbbbbbbbbbbbb','pgs_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','22222222-2222-4222-8222-222222222222','senderAndSubject',0,0,1,'America/Los_Angeles')")
+con.commit()
+
+
+v37 = [
+    "ALTER TABLE push_subscription ADD COLUMN installation_id TEXT NOT NULL DEFAULT ''",
+    """DELETE FROM push_subscription
+       WHERE account_ref != ''
+         AND push_id NOT IN (
+           SELECT MAX(push_id) FROM push_subscription
+           WHERE account_ref != ''
+           GROUP BY user_id, account_ref
+         )""",
+    "CREATE INDEX IF NOT EXISTS idx_push_subscription_user_installation ON push_subscription(user_id, installation_id)",
+    "CREATE INDEX IF NOT EXISTS idx_push_subscription_user_account_ref ON push_subscription(user_id, account_ref)",
+]
+
+for statement in v37:
+    cur.execute(statement)
+
 con.commit()
 
 assert cur.execute('SELECT COUNT(*) FROM device_token').fetchone() == (0,)
 assert cur.execute('SELECT COUNT(*) FROM push_subscription').fetchone() == (2,)
-assert cur.execute("SELECT preview_mode,sound_enabled,badge_enabled FROM push_subscription WHERE user_id=1").fetchone() == ('privateOnly', 1, 1)
+assert cur.execute("SELECT COUNT(*) FROM push_subscription WHERE user_id=1 AND account_ref='11111111-1111-4111-8111-111111111111'").fetchone() == (1,)
+assert cur.execute("SELECT preview_mode,sound_enabled,badge_enabled,installation_id FROM push_subscription WHERE user_id=1").fetchone() == ('privateOnly', 1, 1, '')
 assert cur.execute("SELECT preview_mode,sound_enabled,badge_enabled,quiet_hours_enabled,time_zone FROM push_subscription WHERE user_id=2").fetchone() == ('senderAndSubject', 0, 0, 1, 'America/Los_Angeles')
+cur.execute("UPDATE push_subscription SET installation_id='33333333-3333-4333-8333-333333333333' WHERE user_id=1")
+assert cur.execute("SELECT installation_id FROM push_subscription WHERE user_id=1").fetchone() == ('33333333-3333-4333-8333-333333333333',)
 try:
-    cur.execute("INSERT INTO push_subscription(user_id,subscription_id,push_secret) VALUES(1,'ps_aaaaaaaaaaaaaaaaaaaa','pgs_cccccccccccccccccccccccccccccccc')")
+    cur.execute("INSERT INTO push_subscription(user_id,subscription_id,push_secret) VALUES(2,'ps_bbbbbbbbbbbbbbbbbbbb','pgs_cccccccccccccccccccccccccccccccc')")
     raise AssertionError('duplicate (user, subscription_id) should fail')
 except sqlite3.IntegrityError:
     pass
 
-print('push gateway + notification preference migration: PASS')
+print('push gateway + notification preference + installation de-dup migration: PASS')

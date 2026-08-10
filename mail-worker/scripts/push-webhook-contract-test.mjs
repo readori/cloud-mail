@@ -4,6 +4,7 @@ import path from 'node:path';
 const root = path.resolve(import.meta.dirname, '..');
 const webhook = fs.readFileSync(path.join(root, 'src/service/push-webhook-service.js'), 'utf8');
 const deviceApi = fs.readFileSync(path.join(root, 'src/api/device-api.js'), 'utf8');
+const subscriptionService = fs.readFileSync(path.join(root, 'src/service/push-subscription-service.js'), 'utf8');
 const runtimeFiles = [];
 
 function walk(dir) {
@@ -22,6 +23,11 @@ for (const required of [
   "mode === 'sender'",
   "mode === 'senderAndSubject'",
   'emailRow?.text',
+  'htmlToNotificationText(emailRow?.content, 240)',
+  'previewMode,',
+  'sourceKey,',
+  'eventKey,',
+  'notificationEventKey(sourceKey, emailRow)',
   'soundEnabled:',
   'badgeEnabled:',
   "quiet ? 'badge_sync' : 'new_mail'"
@@ -40,6 +46,15 @@ if (!deviceApi.includes('subscriptionId, pushSecret, accountId')) {
 }
 if (!deviceApi.includes('body)')) {
   throw new Error('CloudMail device API must pass notification preferences into registration');
+}
+if (!deviceApi.includes("app.get('/device/status'")) {
+  throw new Error('CloudMail device API must expose effective notification preference status');
+}
+if (!deviceApi.includes('result.ok(effectivePreferences)')) {
+  throw new Error('CloudMail device registration must return effective notification preferences');
+}
+for (const required of ['previewMode:', 'installationId:', 'async status(c, userId, subscriptionIdValue)']) {
+  if (!subscriptionService.includes(required)) throw new Error(`missing effective preference handshake behavior: ${required}`);
 }
 if (/\{\s*token\s*,/.test(deviceApi)) {
   throw new Error('CloudMail device API must not accept raw APNs tokens');

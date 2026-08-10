@@ -24,7 +24,7 @@ app.delete('/email/delete', async (c) => {
 			pushSubscriptionService.listByUserId(c, userId),
 			emailService.unreadCount(c, userId)
 		]);
-		if (subscriptions.length) await pushWebhookService.syncBadge(c, subscriptions, unreadCount);
+		if (subscriptions.length) await pushWebhookService.syncBadge(c, subscriptions, unreadCount, userId);
 	}
 	return c.json(result.ok());
 });
@@ -47,7 +47,7 @@ app.put('/email/read', async (c) => {
 			pushSubscriptionService.listByUserId(c, userId),
 			emailService.unreadCount(c, userId)
 		]);
-		if (subscriptions.length) await pushWebhookService.syncBadge(c, subscriptions, unreadCount);
+		if (subscriptions.length) await pushWebhookService.syncBadge(c, subscriptions, unreadCount, userId);
 	}
 	return c.json(result.ok());
 })

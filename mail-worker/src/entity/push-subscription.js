@@ -9,6 +9,7 @@ export const pushSubscription = sqliteTable('push_subscription', {
 	subscriptionId: text('subscription_id').notNull(),
 	pushSecret: text('push_secret').notNull(),
 	accountRef: text('account_ref').default('').notNull(),
+	installationId: text('installation_id').default('').notNull(),
 	previewMode: text('preview_mode').default('privateOnly').notNull(),
 	soundEnabled: integer('sound_enabled').default(1).notNull(),
 	badgeEnabled: integer('badge_enabled').default(1).notNull(),

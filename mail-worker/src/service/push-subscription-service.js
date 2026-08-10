@@ -28,6 +28,15 @@ function normalizeAccountRef(value) {
 	return accountRef.toLowerCase();
 }
 
+function normalizeInstallationId(value) {
+	const installationId = toTrimmedString(value, { name: '客户端安装标识', required: false, max: 64 });
+	if (!installationId) return '';
+	if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(installationId)) {
+		throw new BizError('客户端安装标识格式无效', 400);
+	}
+	return installationId.toLowerCase();
+}
+
 function normalizeBoolean(value, fallback) {
 	if (value === undefined || value === null) return fallback;
 	if (typeof value === 'boolean') return value;
@@ -74,19 +83,39 @@ const pushSubscriptionService = {
 		const subscriptionId = normalizeSubscriptionId(subscriptionIdValue);
 		const pushSecret = normalizePushSecret(pushSecretValue);
 		const accountRef = normalizeAccountRef(accountRefValue);
+		const installationId = normalizeInstallationId(preferenceInput.installationId);
 		const prefs = normalizePreferences(preferenceInput);
+
+		// One CloudMail user should have at most one active webhook subscription per CF Mail
+		// installation. This prevents duplicate APNs alerts when SwiftUI restores the same login
+		// more than once or when a lost Keychain credential causes the gateway to rotate its
+		// subscription ID. account_ref cleanup also protects older clients that do not yet send
+		// installationId.
+		if (installationId) {
+			await c.env.db.prepare(`
+				DELETE FROM push_subscription
+				WHERE user_id = ? AND installation_id = ? AND subscription_id <> ?
+			`).bind(uid, installationId, subscriptionId).run();
+		}
+		if (accountRef) {
+			await c.env.db.prepare(`
+				DELETE FROM push_subscription
+				WHERE user_id = ? AND account_ref = ? AND subscription_id <> ?
+			`).bind(uid, accountRef, subscriptionId).run();
+		}
 
 		await c.env.db.prepare(`
 			INSERT INTO push_subscription (
-				user_id, subscription_id, push_secret, account_ref,
+				user_id, subscription_id, push_secret, account_ref, installation_id,
 				preview_mode, sound_enabled, badge_enabled,
 				quiet_hours_enabled, quiet_start_minutes, quiet_end_minutes, time_zone,
 				create_time
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 			ON CONFLICT(user_id, subscription_id) DO UPDATE SET
 				push_secret = excluded.push_secret,
 				account_ref = excluded.account_ref,
+				installation_id = excluded.installation_id,
 				preview_mode = excluded.preview_mode,
 				sound_enabled = excluded.sound_enabled,
 				badge_enabled = excluded.badge_enabled,
@@ -96,7 +125,7 @@ const pushSubscriptionService = {
 				time_zone = excluded.time_zone,
 				create_time = CURRENT_TIMESTAMP
 		`).bind(
-			uid, subscriptionId, pushSecret, accountRef,
+			uid, subscriptionId, pushSecret, accountRef, installationId,
 			prefs.previewMode, prefs.soundEnabled ? 1 : 0, prefs.badgeEnabled ? 1 : 0,
 			prefs.quietHoursEnabled ? 1 : 0, prefs.quietStartMinutes, prefs.quietEndMinutes, prefs.timeZone
 		).run();
@@ -105,6 +134,34 @@ const pushSubscriptionService = {
 			.where(eq(pushSubscription.userId, uid)).orderBy(desc(pushSubscription.pushId)).all();
 		const stale = current.slice(MAX_SUBSCRIPTIONS_PER_USER).map(item => item.pushId);
 		if (stale.length) await orm(c).delete(pushSubscription).where(inArray(pushSubscription.pushId, stale)).run();
+
+		return {
+			subscriptionId,
+			accountRef,
+			installationId,
+			...prefs
+		};
+	},
+
+	async status(c, userId, subscriptionIdValue) {
+		const uid = toId(userId, 'userId');
+		const subscriptionId = normalizeSubscriptionId(subscriptionIdValue);
+		const row = await orm(c).select().from(pushSubscription).where(
+			and(eq(pushSubscription.userId, uid), eq(pushSubscription.subscriptionId, subscriptionId))
+		).get();
+		if (!row) throw new BizError('推送订阅不存在', 404);
+		return {
+			subscriptionId: row.subscriptionId,
+			accountRef: row.accountRef || '',
+			installationId: row.installationId || '',
+			previewMode: normalizePreviewMode(row.previewMode),
+			soundEnabled: normalizeBoolean(row.soundEnabled, true),
+			badgeEnabled: normalizeBoolean(row.badgeEnabled, true),
+			quietHoursEnabled: normalizeBoolean(row.quietHoursEnabled, false),
+			quietStartMinutes: normalizeMinute(row.quietStartMinutes, 22 * 60),
+			quietEndMinutes: normalizeMinute(row.quietEndMinutes, 7 * 60),
+			timeZone: normalizeTimeZone(row.timeZone)
+		};
 	},
 
 	async unregister(c, userId, subscriptionIdValue) {
@@ -126,7 +183,22 @@ const pushSubscriptionService = {
 	},
 
 	async listByUserId(c, userId) {
-		return orm(c).select().from(pushSubscription).where(eq(pushSubscription.userId, toId(userId, 'userId'))).all();
+		const rows = await orm(c).select().from(pushSubscription)
+			.where(eq(pushSubscription.userId, toId(userId, 'userId')))
+			.orderBy(desc(pushSubscription.pushId)).all();
+
+		const seen = new Set();
+		return rows.filter(item => {
+			const installationId = String(item?.installationId || item?.installation_id || '').trim();
+			const accountRef = String(item?.accountRef || item?.account_ref || '').trim();
+			const subscriptionId = String(item?.subscriptionId || item?.subscription_id || '').trim();
+			const logicalKey = installationId
+				? `installation:${installationId}`
+				: (accountRef ? `account:${accountRef}` : `subscription:${subscriptionId}`);
+			if (seen.has(logicalKey)) return false;
+			seen.add(logicalKey);
+			return true;
+		});
 	}
 };
 

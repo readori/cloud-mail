@@ -14,13 +14,19 @@ app.post('/device/register', async (c) => {
 	const body = await c.req.json();
 	const { subscriptionId, pushSecret, accountId } = body;
 	const userId = userContext.getUserId(c);
-	await pushSubscriptionService.register(c, userId, subscriptionId, pushSecret, accountId, body);
+	const effectivePreferences = await pushSubscriptionService.register(c, userId, subscriptionId, pushSecret, accountId, body);
 	const [subscriptions, unreadCount] = await Promise.all([
 		pushSubscriptionService.listByUserId(c, userId),
 		emailService.unreadCount(c, userId)
 	]);
-	if (subscriptions.length) await pushWebhookService.syncBadge(c, subscriptions, unreadCount);
-	return c.json(result.ok());
+	if (subscriptions.length) await pushWebhookService.syncBadge(c, subscriptions, unreadCount, userId);
+	return c.json(result.ok(effectivePreferences));
+});
+
+app.get('/device/status', async (c) => {
+	const subscriptionId = c.req.query('subscriptionId');
+	const data = await pushSubscriptionService.status(c, userContext.getUserId(c), subscriptionId);
+	return c.json(result.ok(data));
 });
 
 app.delete('/device/unregister', async (c) => {
