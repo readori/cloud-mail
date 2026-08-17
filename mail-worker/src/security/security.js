@@ -12,6 +12,7 @@ import { assertCookieCsrf, clearWebSession, getAuthToken } from './auth-session'
 const publicRoutes = [
 	['GET', '/health'],
 	['POST', '/login'],
+	['POST', '/refresh'],
 	['POST', '/register'],
 	['GET', '/setting/websiteConfig'],
 	['POST', '/webhooks'],

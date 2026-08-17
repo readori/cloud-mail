@@ -40,7 +40,7 @@ crons = ["0 16 * * *"]	#每天晚上12点执行每日任务,刷新分析缓存
 # CF Mail iOS remote push: point at the independent Push Gateway; leave unset/blank to disable.
 # Optional override; omitted = https://push.readori.com, "disabled" = opt out
 # cfmail_push_gateway_url = "https://push.readori.com"
-#ai_model = ""			#ai模型,不填默认使用@cf/meta/llama-3.1-8b-instruct
+#ai_model = ""			#ai模型,不填默认使用@cf/meta/llama-3.1-8b-instruct-fast
 #analysis_cache = false
 #password_pbkdf2_iterations = 150000
 #password_rehash_on_login = true

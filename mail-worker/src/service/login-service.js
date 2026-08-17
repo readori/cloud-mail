@@ -48,6 +48,89 @@ function isAllowedDomain(setting, email) {
 		&& setting.domainList.some(item => String(item).replace(/^@/, '').toLowerCase() === domain);
 }
 
+const refreshEncoder = new TextEncoder();
+
+async function sha256Hex(value) {
+	const digest = await crypto.subtle.digest('SHA-256', refreshEncoder.encode(String(value)));
+	return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function sessionUserFromRow(userRow) {
+	return {
+		userId: userRow.userId,
+		email: userRow.email,
+		type: userRow.type,
+		status: userRow.status,
+		isDel: userRow.isDel
+	};
+}
+
+async function issueAccessSession(c, userRow, { revokeSessionToken = null } = {}) {
+	const sessionToken = uuidv4();
+	const jwt = await JwtUtils.generateToken(
+		c,
+		{ userId: userRow.userId, token: sessionToken },
+		constant.TOKEN_EXPIRE
+	);
+	const sessionUser = sessionUserFromRow(userRow);
+	let authInfo = await c.env.kv.get(KvConst.AUTH_INFO + userRow.userId, { type: 'json' });
+	if (authInfo?.user?.email?.toLowerCase() === userRow.email.toLowerCase() && Array.isArray(authInfo.tokens)) {
+		authInfo.tokens = authInfo.tokens.filter(item => typeof item === 'string' && item !== revokeSessionToken).slice(-9);
+		authInfo.tokens.push(sessionToken);
+		authInfo.user = sessionUser;
+		authInfo.refreshTime = dayjs().toISOString();
+	} else {
+		authInfo = { tokens: [sessionToken], user: sessionUser, refreshTime: dayjs().toISOString() };
+	}
+
+	await userService.updateUserInfo(c, userRow.userId);
+	await c.env.kv.put(
+		KvConst.AUTH_INFO + userRow.userId,
+		JSON.stringify(authInfo),
+		{ expirationTtl: constant.TOKEN_EXPIRE }
+	);
+	return { token: jwt, sessionToken };
+}
+
+function randomRefreshToken() {
+	// Two independent UUIDv4 values provide ample entropy while keeping the token URL/JSON safe.
+	return `rt_${uuidv4().replaceAll('-', '')}${uuidv4().replaceAll('-', '')}`;
+}
+
+async function issueRefreshCredential(c, userId, sessionToken) {
+	const refreshToken = randomRefreshToken();
+	const refreshHash = await sha256Hex(refreshToken);
+	const now = Math.floor(Date.now() / 1000);
+	const expiresAt = now + constant.REFRESH_TOKEN_EXPIRE;
+	await c.env.db.prepare('DELETE FROM refresh_session WHERE user_id = ? AND expires_at <= ?')
+		.bind(userId, now).run();
+	await c.env.db.prepare(`
+		INSERT INTO refresh_session(refresh_hash, user_id, session_token, expires_at, created_at)
+		VALUES (?, ?, ?, ?, ?)
+	`).bind(refreshHash, userId, sessionToken, expiresAt, now).run();
+	return { refreshToken, refreshExpiresIn: constant.REFRESH_TOKEN_EXPIRE };
+}
+
+async function tryIssueRefreshCredential(c, userId, sessionToken) {
+	try {
+		return await issueRefreshCredential(c, userId, sessionToken);
+	} catch (error) {
+		// Older self-hosted servers may not have applied 0004 yet. Preserve login compatibility;
+		// the native client will simply require a normal login when the access JWT expires.
+		console.warn(`[${c.get('requestId') || 'login'}] refresh-session unavailable; access session remains valid`, error?.message || error);
+		return null;
+	}
+}
+
+async function revokeRefreshForSession(c, userId, sessionToken) {
+	try {
+		await c.env.db.prepare('DELETE FROM refresh_session WHERE user_id = ? AND session_token = ?')
+			.bind(userId, sessionToken).run();
+	} catch {
+		// Backward-compatible with servers that have not applied the refresh-session migration yet.
+	}
+}
+
 const loginService = {
 	async register(c, params = {}, oauth = false) {
 		await rateLimitService.check(c, oauth ? 'oauth-register' : 'register', {
@@ -171,7 +254,7 @@ const loginService = {
 		if (!expireTime.isValid() || expireTime.isBefore(today)) throw new BizError(t('regKeyExpire'));
 	},
 
-	async login(c, params = {}, noVerifyPwd = false) {
+	async login(c, params = {}, noVerifyPwd = false, includeRefresh = false) {
 		assertLoginRuntime(c);
 		await rateLimitService.check(c, noVerifyPwd ? 'oauth-login' : 'login', {
 			limit: Number(c.env.login_rate_limit) || 20,
@@ -202,40 +285,72 @@ const loginService = {
 			}
 		}
 
-		const sessionToken = uuidv4();
-		const jwt = await JwtUtils.generateToken(
-			c,
-			{ userId: userRow.userId, token: sessionToken },
-			constant.TOKEN_EXPIRE
-		);
-		const sessionUser = {
-			userId: userRow.userId,
-			email: userRow.email,
-			type: userRow.type,
-			status: userRow.status,
-			isDel: userRow.isDel
+		const access = await issueAccessSession(c, userRow);
+		if (!includeRefresh) return access.token;
+		const refresh = await tryIssueRefreshCredential(c, userRow.userId, access.sessionToken);
+		return {
+			token: access.token,
+			expiresIn: constant.TOKEN_EXPIRE,
+			...(refresh || {})
 		};
-		let authInfo = await c.env.kv.get(KvConst.AUTH_INFO + userRow.userId, { type: 'json' });
-		if (authInfo?.user?.email?.toLowerCase() === userRow.email.toLowerCase() && Array.isArray(authInfo.tokens)) {
-			authInfo.tokens = authInfo.tokens.filter(item => typeof item === 'string').slice(-9);
-			authInfo.tokens.push(sessionToken);
-			authInfo.user = sessionUser;
-			authInfo.refreshTime = dayjs().toISOString();
-		} else {
-			authInfo = { tokens: [sessionToken], user: sessionUser, refreshTime: dayjs().toISOString() };
+	},
+
+	async refresh(c, params = {}) {
+		assertLoginRuntime(c);
+		await rateLimitService.check(c, 'session-refresh', {
+			limit: Number(c.env.refresh_rate_limit) || 60,
+			windowSeconds: 3600
+		});
+		const refreshToken = toTrimmedString(params.refreshToken, { name: 'refreshToken', max: 512 });
+		if (!refreshToken || !refreshToken.startsWith('rt_')) throw new BizError(t('authExpired'), 401);
+		const refreshHash = await sha256Hex(refreshToken);
+		const now = Math.floor(Date.now() / 1000);
+
+		let row;
+		try {
+			row = await c.env.db.prepare(`
+				SELECT refresh_hash AS refreshHash, user_id AS userId, session_token AS sessionToken, expires_at AS expiresAt
+				FROM refresh_session WHERE refresh_hash = ? LIMIT 1
+			`).bind(refreshHash).first();
+		} catch {
+			throw new BizError(t('authExpired'), 401);
+		}
+		if (!row || Number(row.expiresAt) <= now) {
+			if (row) await c.env.db.prepare('DELETE FROM refresh_session WHERE refresh_hash = ?').bind(refreshHash).run().catch(() => {});
+			throw new BizError(t('authExpired'), 401);
 		}
 
-		await userService.updateUserInfo(c, userRow.userId);
-		await c.env.kv.put(
-			KvConst.AUTH_INFO + userRow.userId,
-			JSON.stringify(authInfo),
-			{ expirationTtl: constant.TOKEN_EXPIRE }
-		);
-		return jwt;
+		// Consume first. Exactly one concurrent/replayed refresh request can rotate this credential.
+		const consumed = await c.env.db.prepare('DELETE FROM refresh_session WHERE refresh_hash = ? AND expires_at > ?')
+			.bind(refreshHash, now).run();
+		if (Number(consumed?.meta?.changes || 0) !== 1) throw new BizError(t('authExpired'), 401);
+
+		const userRow = await userService.selectByIdIncludeDel(c, Number(row.userId));
+		if (!userRow || userRow.isDel === isDel.DELETE || userRow.status === userConst.status.BAN) {
+			throw new BizError(t('authExpired'), 401);
+		}
+
+		const access = await issueAccessSession(c, userRow, { revokeSessionToken: String(row.sessionToken || '') });
+		const refresh = await issueRefreshCredential(c, userRow.userId, access.sessionToken);
+		return {
+			token: access.token,
+			expiresIn: constant.TOKEN_EXPIRE,
+			...refresh
+		};
+	},
+
+	async cleanupRefreshSessions(c) {
+		const now = Math.floor(Date.now() / 1000);
+		try {
+			await c.env.db.prepare('DELETE FROM refresh_session WHERE expires_at <= ?').bind(now).run();
+		} catch {
+			// Pre-0004 installations remain compatible until migrations are applied.
+		}
 	},
 
 	async logout(c, userId) {
 		const token = await userContext.getToken(c);
+		if (token) await revokeRefreshForSession(c, userId, token);
 		const key = KvConst.AUTH_INFO + userId;
 		const authInfo = await c.env.kv.get(key, { type: 'json' });
 		if (!authInfo || !Array.isArray(authInfo.tokens) || !token) return;

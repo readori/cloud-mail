@@ -30,12 +30,12 @@ const PERSISTED_KEYS = new Set([
 	'notice', 'noRecipient', 'loginDomain', 'bucket', 'region', 'endpoint', 's3AccessKey',
 	's3SecretKey', 'forcePathStyle', 'customDomain', 'tgMsgFrom', 'tgMsgTo', 'tgMsgText',
 	'minEmailPrefix', 'emailPrefixFilter', 'blackSubject', 'blackContent', 'blackFrom', 'aiCode',
-	'aiCodeFilter'
+	'aiCodeFilter', 'syncDelete'
 ]);
 
 const BINARY_KEYS = new Set([
 	'register', 'receive', 'manyEmail', 'addEmail', 'send', 'tgBotStatus', 'forwardStatus',
-	'ruleType', 'notice', 'noRecipient', 'loginDomain', 'forcePathStyle', 'aiCode'
+	'ruleType', 'notice', 'noRecipient', 'loginDomain', 'forcePathStyle', 'aiCode', 'syncDelete'
 ]);
 const TRISTATE_KEYS = new Set(['addEmailVerify', 'registerVerify', 'regKey']);
 const SECRET_KEYS = new Set(['secretKey', 'tgBotToken', 's3AccessKey', 's3SecretKey']);

@@ -90,6 +90,20 @@ const emailService = {
 	async delete(c, params = {}, userId) {
 		const uid = toId(userId, 'userId');
 		const emailIdList = toIdList(params.emailIds, { name: 'emailIds', maxItems: 500 });
+		const { syncDelete } = await settingService.query(c);
+
+		if (syncDelete === settingConst.syncDelete.OPEN) {
+			// Never trust caller-supplied IDs for physical deletion: first reduce the
+			// set to messages owned by the authenticated user. This preserves the
+			// hardened authorization boundary while adopting upstream 3.1 behavior.
+			const owned = await orm(c).select({ emailId: email.emailId }).from(email)
+				.where(and(eq(email.userId, uid), inArray(email.emailId, emailIdList)))
+				.all();
+			const ownedIds = owned.map(row => Number(row.emailId)).filter(Number.isSafeInteger);
+			if (ownedIds.length) await this.physicsDelete(c, { emailIds: ownedIds.join(',') });
+			return;
+		}
+
 		await orm(c).update(email).set({ isDel: isDel.DELETE }).where(
 			and(eq(email.userId, uid), inArray(email.emailId, emailIdList))
 		).run();

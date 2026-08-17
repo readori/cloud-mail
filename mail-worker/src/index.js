@@ -7,6 +7,7 @@ import r2Service from './service/r2-service';
 import oauthService from './service/oauth-service';
 import analysisService from './service/analysis-service';
 import rateLimitService from './service/rate-limit-service';
+import loginService from './service/login-service';
 import openAPIDocument from './openapi/openapi-document.js';
 
 const STATIC_CSP = [
@@ -78,6 +79,7 @@ export default {
 			() => oauthService.clearNoBindOathUser({ env }),
 			() => analysisService.refreshEchartsCache({ env }),
 			() => rateLimitService.cleanup({ env }),
+			() => loginService.cleanupRefreshSessions({ env }),
 			() => emailService.cleanupRetention({ env })
 		]));
 	}

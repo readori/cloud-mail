@@ -5,12 +5,19 @@ import userContext from '../security/user-context';
 import { clearWebSession, isWebClient, setWebSession } from '../security/auth-session';
 
 app.post('/login', async (c) => {
-	const token = await loginService.login(c, await c.req.json());
+	const body = await c.req.json();
 	if (isWebClient(c)) {
+		const token = await loginService.login(c, body);
 		setWebSession(c, token);
 		return c.json(result.ok({ authenticated: true }));
 	}
-	return c.json(result.ok({ token }));
+	const session = await loginService.login(c, body, false, true);
+	return c.json(result.ok(session));
+});
+
+app.post('/refresh', async (c) => {
+	const session = await loginService.refresh(c, await c.req.json());
+	return c.json(result.ok(session));
 });
 
 app.post('/register', async (c) => {

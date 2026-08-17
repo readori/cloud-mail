@@ -48,6 +48,7 @@ const dbInit = {
 		await this.v3_6DB(c);
 		await this.v3_7DB(c);
 		await this.v3_8DB(c);
+		await this.v3_9DB(c);
 		// Encrypt legacy integration secrets and re-wrap values encrypted with the previous key.
 		await settingService.migrateSecrets(c);
 		await settingService.refresh(c);
@@ -63,6 +64,22 @@ const dbInit = {
 		let diff = 0;
 		for (let index = 0; index < left.length; index += 1) diff |= left.charCodeAt(index) ^ right.charCodeAt(index);
 		return diff === 0;
+	},
+
+
+	async v3_9DB(c) {
+		// Cloud-Mail upstream 3.1 compatibility bridge. The protected init step runs
+		// before versioned D1 migrations in the repository deployment workflow.
+		// Old CF Mail databases get the feature OFF by default; databases that already
+		// came from upstream 3.1 keep their existing sync_delete value unchanged.
+		try {
+			await c.env.db.prepare(`ALTER TABLE setting ADD COLUMN sync_delete INTEGER NOT NULL DEFAULT 1;`).run();
+		} catch (error) {
+			const message = String(error?.message || '').toLowerCase();
+			if (!message.includes('duplicate column')) {
+				console.warn(`跳过 Cloud-Mail 3.1 同步删除兼容迁移：${error.message}`);
+			}
+		}
 	},
 
 

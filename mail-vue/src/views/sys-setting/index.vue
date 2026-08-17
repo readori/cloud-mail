@@ -63,6 +63,18 @@
               </div>
               <div class="setting-item">
                 <div>
+                  <span>{{ $t('syncDelete') }}</span>
+                  <el-tooltip effect="dark" :content="$t('syncDeleteDesc')">
+                    <Icon class="warning" icon="fe:warning" width="18" height="18"/>
+                  </el-tooltip>
+                </div>
+                <div>
+                  <el-switch @change="change" :before-change="beforeSyncDeleteChange" :active-value="0" :inactive-value="1"
+                             v-model="setting.syncDelete"/>
+                </div>
+              </div>
+              <div class="setting-item">
+                <div>
                   <span>{{ $t('emailPrefix') }}</span>
                 </div>
                 <div class="forward">
@@ -444,13 +456,13 @@
 
       <!-- Dialogs remain the same -->
       <el-dialog v-model="editTitleShow" :title="$t('changeTitle')" width="340" @closed="editTitle = setting.title">
-        <form>
-          <el-input type="text" :placeholder="$t('websiteTitle')" v-model="editTitle"/>
+        <form @submit.prevent>
+          <el-input type="text" :placeholder="$t('websiteTitle')" v-model="editTitle" @keyup.enter="saveTitle"/>
           <el-button type="primary" :loading="settingLoading" @click="saveTitle">{{ $t('save') }}</el-button>
         </form>
       </el-dialog>
       <el-dialog v-model="resendTokenFormShow" :title="$t('resendToken')" width="340" @closed="cleanResendTokenForm">
-        <form>
+        <form @submit.prevent>
           <el-select style="margin-bottom: 15px" v-model="resendTokenForm.domain" placeholder="Select">
             <el-option
                 v-for="item in settingStore.domainList"
@@ -459,22 +471,22 @@
                 :value="item"
             />
           </el-select>
-          <el-input type="text" :placeholder="$t('addResendTokenDesc')" v-model="resendTokenForm.token"/>
+          <el-input type="text" :placeholder="$t('addResendTokenDesc')" v-model="resendTokenForm.token" @keyup.enter="saveResendToken"/>
           <el-button type="primary" :loading="settingLoading" @click="saveResendToken">{{ $t('save') }}</el-button>
         </form>
       </el-dialog>
       <el-dialog v-model="r2DomainShow" :title="$t('addOsDomain')" width="340"
                  @closed="r2DomainInput = setting.r2Domain">
-        <form>
-          <el-input type="text" :placeholder="$t('domainDesc')" v-model="r2DomainInput"/>
+        <form @submit.prevent>
+          <el-input type="text" :placeholder="$t('domainDesc')" v-model="r2DomainInput" @keyup.enter="saveR2domain"/>
           <el-button type="primary" :loading="settingLoading" @click="saveR2domain">{{ $t('save') }}</el-button>
         </form>
       </el-dialog>
       <el-dialog v-model="turnstileShow" :title="$t('addTurnstileSecret')" width="340"
                  @closed="turnstileForm.secretKey = '';turnstileForm.siteKey = ''">
-        <form>
-          <el-input type="text" placeholder="Site Key" v-model="turnstileForm.siteKey"/>
-          <el-input type="text" style="margin-top: 15px" placeholder="Secret Key" v-model="turnstileForm.secretKey"/>
+        <form @submit.prevent>
+          <el-input type="text" placeholder="Site Key" v-model="turnstileForm.siteKey" @keyup.enter="saveTurnstileKey"/>
+          <el-input type="text" style="margin-top: 15px" placeholder="Secret Key" v-model="turnstileForm.secretKey" @keyup.enter="saveTurnstileKey"/>
           <el-button type="primary" :loading="settingLoading" @click="saveTurnstileKey">{{ $t('save') }}</el-button>
         </form>
       </el-dialog>
@@ -495,7 +507,7 @@
           </span>
         </template>
         <el-input :placeholder="$t('backgroundUrlDesc')" v-model="backgroundUrl" v-if="!localUpShow"
-                  class="background-url"/>
+                  class="background-url" @keyup.enter="saveBackground"/>
         <el-image
             v-if="localUpShow"
             :preview-src-list="[backgroundImage]"
@@ -527,7 +539,7 @@
           </div>
         </template>
         <div class="forward-set-body">
-          <el-input :placeholder="setting.tgBotToken || $t('tgBotToken')" v-model="tgBotToken"></el-input>
+          <el-input :placeholder="setting.tgBotToken || $t('tgBotToken')" v-model="tgBotToken" @keyup.enter="tgBotSave"></el-input>
           <el-input-tag tag-type="warning" :placeholder="$t('toBotTokenDesc')" v-model="tgChatId"
                         @add-tag="addChatTag"></el-input-tag>
           <el-input tag-type="warning" :placeholder="$t('customDomainDesc')" v-model="customDomain" ></el-input>
@@ -639,23 +651,23 @@
       </el-dialog>
       <el-dialog v-model="regVerifyCountShow" :title="$t('rulesVerifyTitle',{count: regVerifyCount})"
                  @closed="regVerifyCount = setting.regVerifyCount">
-        <form>
-          <el-input-number type="text" v-model="regVerifyCount" :min="1">
+        <form @submit.prevent>
+          <el-input-number type="text" v-model="regVerifyCount" :min="1" @keyup.enter="saveRegVerifyCount">
           </el-input-number>
           <el-button type="primary" :loading="settingLoading" @click="saveRegVerifyCount">{{ $t('save') }}</el-button>
         </form>
       </el-dialog>
       <el-dialog v-model="addVerifyCountShow" :title="$t('rulesVerifyTitle',{count: addVerifyCount})"
                  @closed="addVerifyCount = setting.addVerifyCount">
-        <form>
-          <el-input-number type="text" v-model="addVerifyCount" :min="1"/>
+        <form @submit.prevent>
+          <el-input-number type="text" v-model="addVerifyCount" :min="1" @keyup.enter="saveAddVerifyCount"/>
           <el-button type="primary" :loading="settingLoading" @click="saveAddVerifyCount">{{ $t('save') }}</el-button>
         </form>
       </el-dialog>
       <el-dialog top="5vh" v-model="noticePopupShow" :title="$t('noticePopup')" class="notice-popup"
                  @closed="resetNoticeForm">
-        <form>
-          <el-input v-model="noticeForm.noticeTitle" :placeholder="t('titleDesc')"/>
+        <form @submit.prevent>
+          <el-input v-model="noticeForm.noticeTitle" :placeholder="t('titleDesc')" @keyup.enter="saveNoticePopup"/>
           <div class="notice-line-item">
             <el-select v-model="noticeForm.noticeType">
               <template #prefix>
@@ -726,7 +738,7 @@
         </template>
       </el-dialog>
       <el-dialog v-model="addS3Show" :title="t('s3Configuration')" width="340" @closed="resetAddS3Form">
-        <form>
+        <form @submit.prevent>
           <el-input class="dialog-input" type="text" placeholder="Bucket" v-model="s3.bucket"/>
           <el-input class="dialog-input" type="text" placeholder="Endpoint" v-model="s3.endpoint"/>
           <el-input class="dialog-input" type="text" placeholder="Region" v-model="s3.region"/>
@@ -828,7 +840,7 @@ defineOptions({
   name: 'sys-setting'
 })
 
-const currentVersion = 'v3.0.0'
+const currentVersion = 'v3.1.0'
 const hasUpdate = ref(false)
 let getUpdateErrorCount = 1;
 const {t, locale} = useI18n();
@@ -1437,6 +1449,22 @@ function beforeChange() {
   return true
 }
 
+async function beforeSyncDeleteChange() {
+  if (!beforeChange()) return false
+  // 1 = retention/soft-delete (safe default), 0 = permanent deletion.
+  if (setting.value.syncDelete !== 1) return true
+  try {
+    await ElMessageBox.confirm(t('syncDeleteConfirm'), {
+      confirmButtonText: t('confirm'),
+      cancelButtonText: t('cancel'),
+      type: 'warning'
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 function change(e) {
   if (!settingReady.value) return
   const settingForm = {...setting.value}
@@ -1555,13 +1583,11 @@ function editSetting(settingForm, refreshStatus = true) {
 
 .card-grid {
 
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   padding: 20px;
   gap: 20px;
-  @media (max-width: 500px) {
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  }
   @media (max-width: 1023px) {
     gap: 15px;
     padding: 15px;
@@ -1591,17 +1617,19 @@ function editSetting(settingForm, refreshStatus = true) {
 
 .settings-card {
   background-color: var(--el-bg-color);
-  border-radius: 8px;
+  border-radius: 6px;
   border: 1px solid var(--el-border-color);
   transition: all 300ms;
   overflow: hidden;
+  max-width: 900px;
+  width: 100%;
 }
 
 
 .card-title {
   font-size: 15px;
   font-weight: bold;
-  padding: 10px 20px;
+  padding: 15px 20px 12px;
   border-bottom: 1px solid var(--el-border-color);
 }
 

@@ -25,3 +25,29 @@ mail-vue/node_modules
 mail-vue/dist
 .wrangler
 .venv
+
+# iOS/Xcode generated files
+mail-ios/build/
+mail-ios/.build/
+mail-ios/DerivedData/
+mail-ios/*.xcarchive
+
+# Local backend secrets
+mail-worker/.dev.vars
+mail-worker/.dev.vars.*
+mail-worker/.env
+mail-worker/.env.*
+
+# Fastlane / CI generated files
+mail-ios/fastlane/report.xml
+mail-ios/fastlane/Preview.html
+mail-ios/fastlane/screenshots/
+mail-ios/fastlane/test_output/
+mail-ios/vendor/bundle/
+# CI-generated CF Mail AppIcon PNGs (source is Swift)
+mail-ios/Assets.xcassets/AppIcon.appiconset/*.png
+
+# Generated industrial audit / SBOM artifacts
+.audit-artifacts/
+**/__pycache__/
+*.pyc

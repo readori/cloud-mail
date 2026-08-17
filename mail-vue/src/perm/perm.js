@@ -98,6 +98,16 @@ const routers = {
             menu: true,
             workspace: 'admin'
         }
+    }, {
+        path: '/system-settings',
+        redirect: '/admin/system-settings',
+        name: 'sys-setting-upstream-310-compat',
+        meta: {
+            title: 'SystemSettings',
+            name: 'sys-setting',
+            menu: false,
+            workspace: 'admin'
+        }
     }],
     'reg-key:query': [{
         path: '/admin/invite-codes',
