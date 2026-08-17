@@ -15,34 +15,116 @@
         </div>
       </div>
       <div class="container">
-        <el-input-tag  @add-tag="addTagChange" tag-type="primary" @input="inputChange" size="default" v-model="form.receiveEmail" >
-          <template #prefix>
-            <div class="item-title" >{{ $t('recipient') }}</div>
-            <el-select
-                ref="mySelect"
-                class="write-select"
-                popper-class="write-select"
-                :show-arrow="false"
-                :no-match-text="' '"
-                :no-data-text="' '"
-                @visible-change="selectStatusChange"
-                @change="selectChange"
-            >
-              <el-option
-                  v-for="item in selectRecipientList"
-                  :key="item"
-                  :label="item"
-                  :value="item"
-                  style="color: #999896;"
-              />
-            </el-select>
-          </template>
-          <template #suffix>
-            <div style="display: flex;margin-right: 3px;">
-              <Icon icon="fa7-solid:user-plus" width="20" height="20" class="add-contact" @click.stop="openContacts" />
-            </div>
-          </template>
-        </el-input-tag>
+        <div class="recipient-fields">
+          <el-input-tag
+              @add-tag="addTagChange($event, 'receiveEmail')"
+              tag-type="primary"
+              @input="inputChange($event, 'receiveEmail')"
+              size="default"
+              v-model="form.receiveEmail"
+          >
+            <template #prefix>
+              <div class="item-title">{{ $t('recipient') }}</div>
+              <el-select
+                  ref="toSelect"
+                  class="write-select"
+                  popper-class="write-select"
+                  :show-arrow="false"
+                  :no-match-text="' '"
+                  :no-data-text="' '"
+                  @visible-change="selectStatusChange($event, 'receiveEmail')"
+                  @change="selectChange($event, 'receiveEmail')"
+              >
+                <el-option
+                    v-for="item in selectRecipientLists.receiveEmail"
+                    :key="item"
+                    :label="item"
+                    :value="item"
+                    style="color: #999896;"
+                />
+              </el-select>
+            </template>
+            <template #suffix>
+              <div class="recipient-actions">
+                <button type="button" class="recipient-toggle" :class="{ active: showCc }" @click.stop="showCc = !showCc">{{ $t('cc') }}</button>
+                <button type="button" class="recipient-toggle" :class="{ active: showBcc }" @click.stop="showBcc = !showBcc">{{ $t('bcc') }}</button>
+                <Icon icon="fa7-solid:user-plus" width="20" height="20" class="add-contact" @click.stop="openContacts('receiveEmail')" />
+              </div>
+            </template>
+          </el-input-tag>
+
+          <el-input-tag
+              v-if="showCc"
+              @add-tag="addTagChange($event, 'cc')"
+              tag-type="primary"
+              @input="inputChange($event, 'cc')"
+              size="default"
+              v-model="form.cc"
+          >
+            <template #prefix>
+              <div class="item-title">{{ $t('cc') }}</div>
+              <el-select
+                  ref="ccSelect"
+                  class="write-select"
+                  popper-class="write-select"
+                  :show-arrow="false"
+                  :no-match-text="' '"
+                  :no-data-text="' '"
+                  @visible-change="selectStatusChange($event, 'cc')"
+                  @change="selectChange($event, 'cc')"
+              >
+                <el-option
+                    v-for="item in selectRecipientLists.cc"
+                    :key="item"
+                    :label="item"
+                    :value="item"
+                    style="color: #999896;"
+                />
+              </el-select>
+            </template>
+            <template #suffix>
+              <div class="recipient-actions">
+                <Icon icon="fa7-solid:user-plus" width="20" height="20" class="add-contact" @click.stop="openContacts('cc')" />
+              </div>
+            </template>
+          </el-input-tag>
+
+          <el-input-tag
+              v-if="showBcc"
+              @add-tag="addTagChange($event, 'bcc')"
+              tag-type="primary"
+              @input="inputChange($event, 'bcc')"
+              size="default"
+              v-model="form.bcc"
+          >
+            <template #prefix>
+              <div class="item-title">{{ $t('bcc') }}</div>
+              <el-select
+                  ref="bccSelect"
+                  class="write-select"
+                  popper-class="write-select"
+                  :show-arrow="false"
+                  :no-match-text="' '"
+                  :no-data-text="' '"
+                  @visible-change="selectStatusChange($event, 'bcc')"
+                  @change="selectChange($event, 'bcc')"
+              >
+                <el-option
+                    v-for="item in selectRecipientLists.bcc"
+                    :key="item"
+                    :label="item"
+                    :value="item"
+                    style="color: #999896;"
+                />
+              </el-select>
+            </template>
+            <template #suffix>
+              <div class="recipient-actions">
+                <Icon icon="fa7-solid:user-plus" width="20" height="20" class="add-contact" @click.stop="openContacts('bcc')" />
+              </div>
+            </template>
+          </el-input-tag>
+        </div>
         <el-input v-model="form.subject" :placeholder="t('subject')" />
         <tinyEditor :def-value="defValue" ref="editor" @change="change" @focus="focusChange" />
         <div class="button-item">
@@ -138,10 +220,18 @@ let sending = false
 const defValue = ref('')
 const contactsTabRef = ref({})
 const showContacts = ref(false)
-const mySelect = ref()
-let selectStatus = false
+const toSelect = ref()
+const ccSelect = ref()
+const bccSelect = ref()
+const showCc = ref(false)
+const showBcc = ref(false)
+const activeRecipientField = ref('receiveEmail')
+const selectStatuses = reactive({ receiveEmail: false, cc: false, bcc: false })
+const selectRecipientLists = reactive({ receiveEmail: [], cc: [], bcc: [] })
 const backReply = reactive({
   receiveEmail: [],
+  cc: [],
+  bcc: [],
   subject: '',
   content: '',
   sendType: ''
@@ -149,6 +239,8 @@ const backReply = reactive({
 const form = reactive({
   sendEmail: '',
   receiveEmail: [],
+  cc: [],
+  bcc: [],
   accountId: -1,
   name: '',
   subject: '',
@@ -160,14 +252,15 @@ const form = reactive({
   draftId: null,
 })
 
-const selectRecipientList = ref([])
+const recipientFields = ['receiveEmail', 'cc', 'bcc']
 
 const contacts = computed(() => writerStore.sendRecipientRecord.map(item => ({email: item})))
 
-function openContacts() {
+function openContacts(field = 'receiveEmail') {
+  activeRecipientField.value = field
   showContacts.value = true
   nextTick(() => {
-    form.receiveEmail.forEach(item => {
+    form[field].forEach(item => {
       if (writerStore.sendRecipientRecord.includes(item)) {
         contactsTabRef.value.toggleRowSelection({email: item});
       }
@@ -182,21 +275,19 @@ function deleteContact() {
     type: 'warning'
   }).then(() => {
     const contactList = contactsTabRef.value.getSelectionRows().map(item => item.email);
-    form.receiveEmail = form.receiveEmail.filter(item => !contactList.includes(item));
+    recipientFields.forEach(field => {
+      form[field] = form[field].filter(item => !contactList.includes(item));
+    })
     writerStore.sendRecipientRecord = writerStore.sendRecipientRecord.filter(item => !contactList.includes(item));
   })
 }
 
 function chooseContact() {
-
+  const field = activeRecipientField.value
   const contactList = contactsTabRef.value.getSelectionRows().map(item => item.email);
-  contactList.forEach(item => {
-    if (!form.receiveEmail.includes(item)) {
-      form.receiveEmail.push(item);
-    }
-  })
+  contactList.forEach(item => addRecipient(item, field))
 
-  form.receiveEmail = form.receiveEmail.filter(item => {
+  form[field] = form[field].filter(item => {
     return contactList.includes(item) || !writerStore.sendRecipientRecord.includes(item);
   });
 
@@ -207,48 +298,121 @@ function clearSelectContact() {
   contactsTabRef.value.clearSelection();
 }
 
-function selectChange(value) {
-  form.receiveEmail.push(value)
+function getSelectRef(field) {
+  if (field === 'cc') return ccSelect.value
+  if (field === 'bcc') return bccSelect.value
+  return toSelect.value
 }
 
-function selectStatusChange(status) {
-  selectStatus = status
+function selectChange(value, field = 'receiveEmail') {
+  addRecipient(value, field)
 }
 
-const openSelect = () => {
-  mySelect.value.toggleMenu()
+function selectStatusChange(status, field = 'receiveEmail') {
+  selectStatuses[field] = status
 }
 
-function inputChange(value) {
+const openSelect = (field = 'receiveEmail') => {
+  getSelectRef(field)?.toggleMenu?.()
+}
 
-  selectRecipientList.value = writerStore.sendRecipientRecord.filter(item => value && !form.receiveEmail.includes(item) && item.startsWith(value)).slice(0, 10);
+function allRecipientEmails(exceptField = '') {
+  return recipientFields
+      .filter(field => field !== exceptField)
+      .flatMap(field => form[field])
+      .map(item => String(item).trim().toLowerCase())
+}
 
-  if (!selectStatus && selectRecipientList.value.length > 0) {
-    openSelect()
+function recipientExists(email, exceptField = '') {
+  const normalized = String(email).trim().toLowerCase()
+  return allRecipientEmails(exceptField).includes(normalized)
+}
+
+function addRecipient(value, field = 'receiveEmail') {
+  const email = String(value || '').trim()
+  if (!email || !isEmail(email)) return false
+  if (recipientExists(email, field)) return false
+  if (form[field].some(item => String(item).trim().toLowerCase() === email.toLowerCase())) return false
+  form[field].push(email)
+  return true
+}
+
+function inputChange(value, field = 'receiveEmail') {
+  const currentValue = String(value || '').trim().toLowerCase()
+  selectRecipientLists[field] = writerStore.sendRecipientRecord.filter(item => {
+    const normalized = String(item).toLowerCase()
+    return currentValue && !recipientExists(item) && !form[field].some(existing => String(existing).toLowerCase() === normalized) && normalized.startsWith(currentValue)
+  }).slice(0, 10);
+
+  if (!selectStatuses[field] && selectRecipientLists[field].length > 0) {
+    openSelect(field)
   }
 
-  if (selectStatus && selectRecipientList.value.length === 0) {
-    openSelect()
+  if (selectStatuses[field] && selectRecipientLists[field].length === 0) {
+    openSelect(field)
   }
-
 }
 
-function addTagChange(val) {
-
+function addTagChange(val, field = 'receiveEmail') {
   const emails = Array.from(new Set(
-      val.split(/[,，]/).map(item => item.trim()).filter(item => item)
+      String(val || '').split(/[,，;；]/).map(item => item.trim()).filter(Boolean)
   ));
 
-  form.receiveEmail.splice(form.receiveEmail.length - 1, 1)
+  // el-input-tag inserts the raw value before emitting add-tag. Remove it and
+  // re-add only validated, de-duplicated addresses.
+  form[field].splice(form[field].length - 1, 1)
 
   let has = false
+  let invalid = ''
   emails.forEach(email => {
-    if (isEmail(email) && !form.receiveEmail.includes(email)) {
-      form.receiveEmail.push(email)
-      has = true
+    if (!isEmail(email)) {
+      invalid = invalid || email
+      return
     }
+    if (addRecipient(email, field)) has = true
   })
-  if (selectStatus && has) openSelect()
+
+  if (invalid) {
+    ElMessage({
+      message: t('invalidRecipientMsg', {email: invalid}),
+      type: 'error',
+      plain: true,
+    })
+  }
+  if (selectStatuses[field] && has) openSelect(field)
+}
+
+function normalizeRecipientFields() {
+  const used = new Set()
+  for (const field of recipientFields) {
+    const normalized = []
+    for (const raw of form[field] || []) {
+      const email = String(raw || '').trim()
+      if (!isEmail(email)) {
+        ElMessage({
+          message: t('invalidRecipientMsg', {email}),
+          type: 'error',
+          plain: true,
+        })
+        return false
+      }
+      const key = email.toLowerCase()
+      if (used.has(key)) continue
+      used.add(key)
+      normalized.push(email)
+    }
+    form[field] = normalized
+  }
+
+  if (used.size > 100) {
+    ElMessage({
+      message: t('recipientLimitMsg'),
+      type: 'error',
+      plain: true,
+    })
+    return false
+  }
+  return true
 }
 
 function clearContent() {
@@ -290,6 +454,8 @@ function chooseFile() {
 }
 
 async function sendEmail() {
+
+  if (!normalizeRecipientFields()) return
 
   if (form.receiveEmail.length === 0) {
     ElMessage({
@@ -374,6 +540,8 @@ async function sendEmail() {
       form.subject = ''
       form.content = ''
       form.receiveEmail = []
+      form.cc = []
+      form.bcc = []
       draftStore.setDraft = {...toRaw(form)}
     }
 
@@ -400,16 +568,30 @@ async function sendEmail() {
 }
 
 function addRecipientRecord() {
+  const recipients = recipientFields
+      .flatMap(field => form[field])
+      .filter(Boolean)
+      .filter((email, index, list) => list.findIndex(item => String(item).toLowerCase() === String(email).toLowerCase()) === index)
+
+  const currentKeys = new Set(recipients.map(email => String(email).toLowerCase()))
   writerStore.sendRecipientRecord = writerStore.sendRecipientRecord.filter(
-      email => !form.receiveEmail.includes(email)
+      email => !currentKeys.has(String(email).toLowerCase())
   );
 
-  writerStore.sendRecipientRecord.unshift(...form.receiveEmail);
+  writerStore.sendRecipientRecord.unshift(...recipients);
   writerStore.sendRecipientRecord = writerStore.sendRecipientRecord.slice(0, 500);
 }
 
 function resetForm() {
   form.receiveEmail = []
+  form.cc = []
+  form.bcc = []
+  showCc.value = false
+  showBcc.value = false
+  recipientFields.forEach(field => {
+    selectStatuses[field] = false
+    selectRecipientLists[field] = []
+  })
   form.subject = ''
   form.content = ''
   form.manyType = null
@@ -420,6 +602,8 @@ function resetForm() {
   backReply.content = ''
   backReply.subject = ''
   backReply.receiveEmail = []
+  backReply.cc = []
+  backReply.bcc = []
   backReply.sendType = ''
   editor.value.clearEditor()
 }
@@ -430,7 +614,9 @@ function change(content, text) {
 }
 
 function focusChange() {
-  if (selectStatus) openSelect()
+  recipientFields.forEach(field => {
+    if (selectStatuses[field]) openSelect(field)
+  })
 }
 
 function openForward(email) {
@@ -452,7 +638,9 @@ function openForward(email) {
     nextTick(() => {
       backReply.content = editor.value.getContent()
       backReply.subject = form.subject
-      backReply.receiveEmail = form.receiveEmail
+      backReply.receiveEmail = [...form.receiveEmail]
+      backReply.cc = [...form.cc]
+      backReply.bcc = [...form.bcc]
       backReply.sendType = form.sendType
     })
 
@@ -493,7 +681,9 @@ function openReply(email) {
     nextTick(() => {
       backReply.content = editor.value.getContent()
       backReply.subject = form.subject
-      backReply.receiveEmail = form.receiveEmail
+      backReply.receiveEmail = [...form.receiveEmail]
+      backReply.cc = [...form.cc]
+      backReply.bcc = [...form.bcc]
       backReply.sendType = form.sendType
     })
   })
@@ -520,10 +710,33 @@ function open() {
   editor.value.focus()
 }
 
+function toDraftRecipientList(value) {
+  if (Array.isArray(value)) return value.filter(Boolean)
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value)
+    if (Array.isArray(parsed)) {
+      return parsed.map(item => typeof item === 'string' ? item : item?.address).filter(Boolean)
+    }
+  } catch (_) {
+    // Older local drafts may contain a single string value.
+  }
+  return String(value).split(/[,，;；]/).map(item => item.trim()).filter(Boolean)
+}
+
 function openDraft(draft) {
-  Object.assign(form, {...draft})
+  resetForm()
+  Object.assign(form, {
+    ...draft,
+    receiveEmail: toDraftRecipientList(draft.receiveEmail),
+    cc: toDraftRecipientList(draft.cc),
+    bcc: toDraftRecipientList(draft.bcc),
+    attachments: Array.isArray(draft.attachments) ? draft.attachments : []
+  })
+  showCc.value = form.cc.length > 0
+  showBcc.value = form.bcc.length > 0
   defValue.value = ''
-  setTimeout(() => defValue.value = form.content)
+  setTimeout(() => defValue.value = form.content || '')
   show.value = true;
   editor.value.focus()
 }
@@ -542,9 +755,16 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown);
 });
 
+function sameRecipientList(left = [], right = []) {
+  if (left.length !== right.length) return false
+  return left.every((item, index) => String(item).toLowerCase() === String(right[index] || '').toLowerCase())
+}
+
 function close() {
 
-  if (selectStatus) openSelect();
+  recipientFields.forEach(field => {
+    if (selectStatuses[field]) openSelect(field)
+  });
 
   if (!form.content) {
     form.content = editor.value.getContent();
@@ -557,7 +777,7 @@ function close() {
     return;
   }
 
-  if (!(form.content || form.subject || form.receiveEmail.length > 0)) {
+  if (!(form.content || form.subject || form.receiveEmail.length > 0 || form.cc.length > 0 || form.bcc.length > 0)) {
     show.value = false
     resetForm()
     return;
@@ -566,11 +786,13 @@ function close() {
   if (backReply.sendType === 'reply' || backReply.sendType === 'forward') {
     let subjectFlag = form.subject === backReply.subject
     let contentFlag = editor.value.getContent() === backReply.content
-    let receiveFlag = form.receiveEmail.length === 1 && form.receiveEmail[0] === backReply.receiveEmail[0]
+    let receiveFlag = sameRecipientList(form.receiveEmail, backReply.receiveEmail)
+    let ccFlag = sameRecipientList(form.cc, backReply.cc)
+    let bccFlag = sameRecipientList(form.bcc, backReply.bcc)
     if (backReply.sendType === 'forward' && form.receiveEmail.length === 0) {
-      receiveFlag = true;
+      receiveFlag = backReply.receiveEmail.length === 0;
     }
-    if (subjectFlag && contentFlag && receiveFlag) {
+    if (subjectFlag && contentFlag && receiveFlag && ccFlag && bccFlag) {
       resetForm();
       close()
       return;
@@ -695,6 +917,35 @@ function close() {
       gap: 15px;
 
       .item-title {
+        min-width: 48px;
+      }
+
+      .recipient-fields {
+        display: grid;
+        gap: 8px;
+      }
+
+      .recipient-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-right: 3px;
+      }
+
+      .recipient-toggle {
+        border: 0;
+        padding: 2px 4px;
+        background: transparent;
+        color: var(--el-text-color-secondary);
+        cursor: pointer;
+        font: inherit;
+        border-radius: 4px;
+
+        &:hover,
+        &.active {
+          color: var(--el-color-primary);
+          background: var(--el-fill-color-light);
+        }
       }
 
       .button-item {
