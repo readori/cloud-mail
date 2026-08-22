@@ -123,3 +123,7 @@ Production CloudMail deployments require three independent Worker secrets with a
 Set them with Cloudflare Worker Secrets (or the GitHub Actions `JWT_SECRET`, `INIT_SECRET`, and `CONFIG_ENCRYPTION_KEY` secrets). Never place these values in `wrangler.toml` `[vars]`.
 
 For encryption-key rotation, temporarily configure `config_encryption_key_previous` / `CONFIG_ENCRYPTION_KEY_PREVIOUS` with the old value and set `config_encryption_key` to the new value. Run the protected database initialization once; CloudMail decrypts legacy envelopes with the previous key and re-encrypts them with the new key. After verification, remove the previous key.
+
+## Upstream
+
+This project is modified based on [maillab/cloud-mail](https://github.com/maillab/cloud-mail) .
