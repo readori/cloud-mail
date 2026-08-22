@@ -47,9 +47,7 @@
                  :style="item.rightChecked ? 'background: #FDF6EC' : ''"
             >
               <el-checkbox :class=" props.type === 'all-email' ? 'all-email-checkbox' : 'checkbox'"
-                           v-model="item.checked"
-                           :disabled="!item.checked && isSelectMax"
-                           @click.stop></el-checkbox>
+                           v-model="item.checked" @click.stop></el-checkbox>
               <div @click.stop="starChange(item)" class="pc-star" v-if="showStar">
                 <Icon v-if="item.isStar" icon="fluent-color:star-16" width="20" height="20"/>
                 <Icon v-else icon="solar:star-line-duotone" width="18" height="18"/>
@@ -327,9 +325,7 @@ const dropdownRef = ref(null);
 const dropdownCloseLock = ref(false);
 const dropdownShow = ref(false);
 const rightClickEmail = ref({});
-const MAX_SELECT_COUNT = 95;
 const checkedEmailCount = ref(0);
-const isSelectMax = computed(() => checkedEmailCount.value >= MAX_SELECT_COUNT);
 let timer = null
 const position = ref(
     DOMRect.fromRect({
@@ -454,12 +450,9 @@ watch(() => arrivedState.bottom, (isBottom) => {
 watch(
     () => emailList.map(item => item.checked),
     () => {
+      checkedEmailCount.value = emailList.length
       if (emailList.length > 0) {
         updateCheckStatus();
-      } else {
-        checkedEmailCount.value = 0;
-        checkAll.value = false;
-        isIndeterminate.value = false;
       }
     },
     {deep: true}
@@ -760,20 +753,8 @@ function addItem(email) {
 }
 
 function handleCheckAllChange(val) {
-  if (val) {
-    let count = 0;
-    emailList.forEach(item => {
-      if (count < MAX_SELECT_COUNT) {
-        item.checked = true;
-        count += 1;
-      } else {
-        item.checked = false;
-      }
-    });
-  } else {
-    emailList.forEach(item => item.checked = false);
-  }
-  updateCheckStatus();
+  emailList.forEach(item => item.checked = val);
+  isIndeterminate.value = false;
 }
 
 // 获取选中的邮件列表id
@@ -788,9 +769,8 @@ function getSelectedDraftsIds() {
 function updateCheckStatus() {
   const checkedCount = emailList.filter(item => item.checked).length;
   checkedEmailCount.value = checkedCount;
-  const atMax = checkedCount >= MAX_SELECT_COUNT;
-  checkAll.value = emailList.length > 0 && (checkedCount === emailList.length || atMax);
-  isIndeterminate.value = checkedCount > 0 && !checkAll.value;
+  checkAll.value = checkedCount === emailList.length;
+  isIndeterminate.value = checkedCount > 0 && checkedCount < emailList.length;
 }
 
 function jumpDetails(email) {

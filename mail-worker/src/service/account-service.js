@@ -117,11 +117,6 @@ const accountService = {
 		if (!currentUser) throw new BizError(t('authExpired'), 401);
 		if (!row || row.userId !== currentUser.userId) throw new BizError(t('noUserAccount'), 404);
 		if (row.email.toLowerCase() === currentUser.email.toLowerCase()) throw new BizError(t('delMyAccount'));
-		const { syncDelete } = await settingService.query(c);
-		if (syncDelete === settingConst.syncDelete.OPEN) {
-			await this.physicsDelete(c, { accountId });
-			return;
-		}
 		await orm(c).update(account).set({ isDel: isDel.DELETE })
 			.where(and(eq(account.userId, currentUser.userId), eq(account.accountId, accountId)))
 			.run();

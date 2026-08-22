@@ -1,169 +1,127 @@
-<p align="center">
-    <img src="doc/demo/logo.png" width="80px" />
-    <h1 align="center">Cloud Mail</h1>
-    <p align="center">A simple, responsive email service designed to run on Cloudflare Workers 🎉</p> 
-    <p align="center">
-       English | <a href="/README.zh-CN.md" style="margin-left: 5px">简体中文</a>  
-    </p>
-    <p align="center">
-        <a href="https://github.com/maillab/cloud-mail/tree/main?tab=MIT-1-ov-file" target="_blank" >
-            <img src="https://img.shields.io/badge/license-MIT-green" />
-        </a>    
-        <a href="https://github.com/maillab/cloud-mail/releases" target="_blank" >
-            <img src="https://img.shields.io/github/v/release/maillab/cloud-mail" alt="releases" />
-        </a>  
-        <a href="https://github.com/maillab/cloud-mail/issues" >
-            <img src="https://img.shields.io/github/issues/maillab/cloud-mail" alt="issues" />
-        </a>  
-        <a href="https://github.com/maillab/cloud-mail/stargazers" target="_blank">
-            <img src="https://img.shields.io/github/stars/maillab/cloud-mail" alt="stargazers" />
-        </a>  
-        <a href="https://github.com/maillab/cloud-mail/forks" target="_blank" >
-            <img src="https://img.shields.io/github/forks/maillab/cloud-mail" alt="forks" />
-        </a>
-    </p>
-    <p align="center">
-        <a href="https://trendshift.io/repositories/20459" target="_blank" >
-            <img src="https://trendshift.io/api/badge/repositories/20459" alt="trendshift" >
-        </a>
-    </p>
-</p>
+# CloudMail
 
-> [!IMPORTANT]
-> This project is based on maillab/cloud-mail. Key changes include:
+CloudMail/CF Mail contains four independently deployable components:
 
-> - **Enhanced Cloud Mail Backend: Improvements to Email APIs, CC/BCC, notifications, and security.
+- `mail-vue/` — Vue 3 web client.
+- `mail-worker/` — self-hostable CloudMail Cloudflare Worker API/backend.
+- `mail-ios/` — SwiftUI CF Mail iOS client with CloudMail HTTP accounts and direct IMAP/SMTP accounts.
+- `cfmail-push-gateway/` — small official CF Mail APNs provider. It is intentionally separate from self-hosted CloudMail.
 
-> - ** New Feature: Added support for the CF Mail iOS client.
-> - 
-> - ** [CloudMail Deployment Guide](https://cfmail.readori.com/cloudmail-cloudflare-deploy-guide)<br>
+## Web
 
-> - ** <a href="/doc/CloudMail-Self-Hosting-Deployment-Guide-EN.md" style="margin-left: 5px"> CloudMail-Self-Hosting-Deployment </a>
-
-## Description
-With only one domain, you can create multiple different email addresses, similar to major email platforms. This project can be deployed on Cloudflare Workers to reduce server costs and build your own email service.
-
-## Project Showcase
-
-- [Live Demo](https://skymail.ink)<br>
-- [CloudMail Deployment Guide](https://cfmail.readori.com/cloudmail-cloudflare-deploy-guide)<br>
-- [Deployment Guide](https://doc.skymail.ink/en/)<br>
-
-
-
-| ![](/doc/demo/demo1.png) | ![](/doc/demo/demo2.png) |
-|--------------------------|--------------------------|
-| ![](/doc/demo/demo3.png) | ![](/doc/demo/demo4.png) |
-
-## Features
-
-- **💰 Low-Cost Usage**: No server required — deploy to Cloudflare Workers to reduce costs.
-
-- **💻 Responsive Design**: Automatically adapts to both desktop and most mobile browsers.
-
-- **📧 Email Sending**: Integrated with Resend, supporting bulk email sending and attachments.
-
-- **🛡️ Admin Features**: Admin controls for user and email management with RBAC-based access control.
-
-- **📦 Attachment Support**: Send and receive attachments, stored and downloaded via R2 object storage.
-
-- **🔔 Email Push**: Forward received emails to Telegram bots or other email providers.
-
-- **📡 Open API**: Supports batch user creation via API and multi-condition email queries
-
-- **🔢 Verification Code Recognition**: Auto-detect codes via Workers AI
-
-- **📈 Data Visualization**: Use ECharts to visualize system data, including user email growth.
-
-- **🎨 Personalization**: Customize website title, login background, and transparency.
-
-- **🤖 CAPTCHA**: Integrated with Turnstile CAPTCHA to prevent automated registration.
-
-- **📜 More Features**: Under development...
-
-## Tech Stack
-
-- **Platform**: [Cloudflare Workers](https://developers.cloudflare.com/workers/)
-
-- **Web Framework**: [Hono](https://hono.dev/)
-
-- **ORM**: [Drizzle](https://orm.drizzle.team/)
-
-- **Frontend Framework**: [Vue3](https://vuejs.org/)
-
-- **UI Framework**: [Element Plus](https://element-plus.org/)
-
-- **Email Service**: [Resend](https://resend.com/)
-
-- **Cache**: [Cloudflare KV](https://developers.cloudflare.com/kv/)
-
-- **Database**: [Cloudflare D1](https://developers.cloudflare.com/d1/)
-
-- **File Storage**: [Cloudflare R2](https://developers.cloudflare.com/r2/)
-
-## Project Structure
-
-```
-cloud-mail
-├── mail-worker				    # Backend worker project
-│   ├── src                  
-│   │   ├── api	 			    # API layer
-│   │   ├── const  			    # Project constants
-│   │   ├── dao                 # Data access layer
-│   │   ├── email			    # Email processing and handling
-│   │   ├── entity			    # Database entities
-│   │   ├── error			    # Custom exceptions
-│   │   ├── hono			    # Web framework, middleware, error handling
-│   │   ├── i18n			    # Internationalization
-│   │   ├── init			    # Database and cache initialization
-│   │   ├── model			    # Response data models
-│   │   ├── security			# Authentication and authorization
-│   │   ├── service			    # Business logic layer
-│   │   ├── template			# Message templates
-│   │   ├── utils			    # Utility functions
-│   │   └── index.js			# Entry point
-│   ├── package.json			# Project dependencies
-│   └── wrangler.toml			# Project configuration
-│
-├─ mail-vue				        # Frontend Vue project
-│   ├── src
-│   │   ├── axios 			    # Axios configuration
-│   │   ├── components			# Custom components
-│   │   ├── echarts			    # ECharts integration
-│   │   ├── i18n			    # Internationalization
-│   │   ├── init			    # Startup initialization
-│   │   ├── layout			    # Main layout components
-│   │   ├── perm			    # Permissions and access control
-│   │   ├── request			    # API request layer
-│   │   ├── router			    # Router configuration
-│   │   ├── store			    # Global state management
-│   │   ├── utils			    # Utility functions
-│   │   ├── views			    # Page components
-│   │   ├── app.vue			    # Root component
-│   │   ├── main.js			    # Entry JS file
-│   │   └── style.css			# Global styles
-│   ├── package.json			# Project dependencies
-└── └── env.release				# Environment configuration
-
+```bash
+cd mail-vue
+pnpm install --frozen-lockfile
+pnpm run contract:test
+pnpm run dev
 ```
 
-## Backend Security Hardening
-This release includes a comprehensive backend security audit covering authentication & authorization, OAuth, registration & Turnstile, emails & attachments, D1/KV/R2/S3, Resend Webhooks, APNs, initialization, and sensitive configurations.
+The request layer normalizes Worker pagination contracts before sending requests. Page `num` is always `1...1000000`; endpoint-specific `size` limits are enforced while mail cursors such as `emailId=0` keep their separate first-page semantics.
 
-Please make sure to read BACKEND_SECURITY_AUDIT.md prior to deployment. When upgrading, you must:
+## Worker
 
-1.Rotate and configure secrets such as jwt_secret, init_secret, and resend_webhook_secret via wrangler secret put.
+```bash
+cd mail-worker
+pnpm install --frozen-lockfile
+pnpm run security:test
+pnpm run security:migration-test
+pnpm run email:list:test
+pnpm run dev
+```
 
-2.Run the latest database migrations using POST /api/init with X-Init-Secret.
+Copy `.dev.vars.example` to `.dev.vars` for local secrets. Never commit `.dev.vars`.
 
-3.Rebuild and deploy mail-vue to enable OAuth state and one-time binding credentials.
+### Remote push for self-hosted CloudMail
 
-4.Verify email delivery, Webhooks, object storage, and APNs in a staging environment before routing production traffic.
+CloudMail no longer connects directly to Apple APNs and never stores CF Mail APNs device tokens. To enable CF Mail iOS remote notifications, set:
 
-The legacy GET /api/init/:secret and unsigned Resend Webhooks are disabled by default and are not recommended to be re-enabled.
+```text
+cfmail_push_gateway_url=https://push.readori.com
+```
 
-## License
-This project is licensed under GPLv3.
+The Worker stores only a scoped `subscriptionId + pushSecret` and sends privacy-minimized push events to the independent Gateway. See `cfmail-push-gateway/README.md`.
 
-## Upstream
-This project is based on maillab/cloud-mail.
+## CF Mail Push Gateway
+
+`cfmail-push-gateway/` is the only component that owns Readori's APNs provider credentials. Deploy it separately and keep its D1 database and Apple `.p8` private. See `cfmail-push-gateway/README.md`.
+
+## iOS
+
+Requirements for a full build: macOS, Xcode 16 or later, and Git.
+
+Direct IMAP/SMTP setup includes provider-aware presets for **163.com, 126.com, yeah.net, QQ Mail / Foxmail, Yahoo Mail, Gmail, Outlook/Hotmail, iCloud Mail and Fastmail**, plus a generic advanced IMAP/SMTP path. For NetEase/QQ accounts the iOS UI explicitly asks for a client authorization code; Yahoo/iCloud-style providers show App Password guidance. Chinese mailbox names such as 收件箱、已发送、草稿箱、已删除 and 垃圾邮件 are normalized to standard mailbox roles.
+
+Production/device builds use MailCore2's upstream Swift Package pinned to commit `8f0923db493ad8fc3e0f33fd0c70f3633e8787a7`. The package supplies the arm64 iOS-device binary required for Archive, IPA and TestFlight. Production CI does not rebuild MailCore2/libetpan from source and does not use the legacy MailCore2 Simulator slice as a release gate.
+
+### Local diagnostics and administrator console
+
+iOS includes a local-only diagnostic center backed by Apple Unified Logging plus bounded JSONL files in Application Support. Diagnostic files use iOS Data Protection, are excluded from backups, rotate at roughly 2 MB per file, and are pruned to seven days / seven files. API timing, IMAP/SMTP phases, sync/offline operations, app lifecycle and network-path state are recorded without message bodies, subjects, attachment contents, credentials or authorization values. Email addresses and account identifiers are replaced with stable short hashes. Nothing is uploaded automatically; the user must explicitly export/share a redacted diagnostic JSON package from **Settings → Support & Diagnostics**.
+
+CloudMail users with administrator permissions also get a permission-gated iOS administrator console mirroring the existing Web/Worker APIs for **Analytics, Users, All Mail, Roles/Permissions, Invite Codes and System Settings**. Visibility and write operations continue to use the exact Worker `permKey` checks such as `analysis:query`, `user:query`, `all-email:delete`, `role:set` and `reg-key:add`; the iOS UI does not bypass backend authorization.
+
+Local project preparation on macOS:
+
+```bash
+cd mail-ios
+/bin/bash scripts/prepare_xcode_project.sh
+```
+
+Static validation:
+
+```bash
+/bin/bash scripts/phase11_static_qa.sh
+```
+
+### Manual GitHub Actions
+
+Release/deployment workflows are **manual only**. Pull requests and pushes run the dedicated secret-free quality gate, but never perform signing, App Store uploads, or Cloudflare production deployment.
+
+For iOS distribution, open GitHub **Actions → CloudMail iOS → Run workflow**. Choose:
+
+- `archive` — creates and validates a signed Release `.xcarchive` through Fastlane Match without uploading to TestFlight.
+- `testflight` — runs the same signed Release Archive Gate, then uploads only after the archive passes.
+- `sideload` — builds an unsigned Release IPA and publishes it as a GitHub prerelease for tools such as Sideloadly/AltStore/SideStore to sign locally.
+- `both` — produces the sideload prerelease and also runs the signed Archive Gate + TestFlight upload.
+
+**Ad Hoc distribution is retired.** CI no longer creates or revokes Ad Hoc/Distribution assets outside the Fastlane Match source of truth.
+
+`app_version` controls `CFBundleShortVersionString`; `build_number` controls `CFBundleVersion` (blank uses the GitHub run number). `Info.plist` consumes Xcode's `$(MARKETING_VERSION)` and `$(CURRENT_PROJECT_VERSION)` values.
+
+TestFlight/Archive signing uses `readori/readori-certificates` through pinned Fastlane Match in readonly mode by default. Required repository secrets are the App Store Connect/Match values referenced by `.github/workflows/cloudmail-ios.yml`; `signing_bootstrap=true` is an explicit one-time exception when signing assets must be created or updated.
+
+Debug builds use `CloudMail.entitlements` with APNs development entitlement. Release Archive/TestFlight builds use `CloudMailRelease.entitlements` with APNs production entitlement.
+
+## Repository validation
+
+Web contract check:
+
+```bash
+cd mail-vue && node scripts/api-contract-test.mjs
+```
+
+Worker checks:
+
+```bash
+cd mail-worker
+pnpm install --frozen-lockfile
+pnpm audit:test
+```
+
+## Security / release notes
+
+- Passwords and tokens belong in iOS Keychain or Worker secrets/environment bindings, never source control.
+- TestFlight upload credentials are read only from GitHub Actions secrets.
+- App Store Connect API private keys must never be committed.
+- Third-party license files are retained where required.
+
+## Production security secrets
+
+Production CloudMail deployments require three independent Worker secrets with at least 32 characters:
+
+- `jwt_secret` — signs API/native-client JWTs.
+- `init_secret` — authorizes `POST /api/init` during a maintenance window.
+- `config_encryption_key` — AES-GCM envelope-encryption root for administrator-configured Turnstile, Telegram, Resend and S3 credentials stored in D1/KV.
+
+Set them with Cloudflare Worker Secrets (or the GitHub Actions `JWT_SECRET`, `INIT_SECRET`, and `CONFIG_ENCRYPTION_KEY` secrets). Never place these values in `wrangler.toml` `[vars]`.
+
+For encryption-key rotation, temporarily configure `config_encryption_key_previous` / `CONFIG_ENCRYPTION_KEY_PREVIOUS` with the old value and set `config_encryption_key` to the new value. Run the protected database initialization once; CloudMail decrypts legacy envelopes with the previous key and re-encrypts them with the new key. After verification, remove the previous key.

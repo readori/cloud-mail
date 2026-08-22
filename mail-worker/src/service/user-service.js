@@ -3,7 +3,7 @@ import accountService from './account-service';
 import orm from '../entity/orm';
 import user from '../entity/user';
 import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
-import { emailConst, isDel, roleConst, settingConst, userConst } from '../const/entity-const';
+import { emailConst, isDel, roleConst, userConst } from '../const/entity-const';
 import kvConst from '../const/kv-const';
 import KvConst from '../const/kv-const';
 import cryptoUtils from '../utils/crypto-utils';
@@ -18,7 +18,6 @@ import { t } from '../i18n/i18n';
 import reqUtils from '../utils/req-utils';
 import {oauth} from "../entity/oauth";
 import oauthService from './oauth-service';
-import settingService from './setting-service';
 import { normalizeEmail, toId, toIdList, toInteger, toPageNumber, toPageSize } from '../utils/input-utils';
 
 function isAdminEmail(c, email) {
@@ -77,7 +76,6 @@ const userService = {
 		const uid = toId(userId, 'userId');
 		await this.updatePasswordHash(c, uid, hash, salt);
 		await c.env.kv.delete(KvConst.AUTH_INFO + uid);
-		try { await c.env.db.prepare('DELETE FROM refresh_session WHERE user_id = ?').bind(uid).run(); } catch { /* pre-0004 compatibility */ }
 	},
 
 	async updatePasswordHash(c, userId, hash, salt) {
@@ -121,11 +119,6 @@ const userService = {
 	async delete(c, userId) {
 		const uid = toId(userId, 'userId');
 		await assertMutableUser(c, uid);
-		const { syncDelete } = await settingService.query(c);
-		if (syncDelete === settingConst.syncDelete.OPEN) {
-			await this.physicsDelete(c, { userIds: String(uid) });
-			return;
-		}
 		await orm(c).update(user).set({ isDel: isDel.DELETE }).where(eq(user.userId, uid)).run();
 		await c.env.kv.delete(kvConst.AUTH_INFO + uid);
 	},

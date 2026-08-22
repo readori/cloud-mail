@@ -24,59 +24,16 @@ INSERT INTO _cloudmail_integrity_guard(orphan_count)
 SELECT COUNT(*) FROM account a
 WHERE NOT EXISTS (SELECT 1 FROM user u WHERE u.user_id = a.user_id);
 
--- CloudMail intentionally persists unmatched incoming messages while they are being
--- classified and after they become admin-visible NOONE mail:
---   status=6 (SAVING) or status=7 (NOONE), user_id=0, account_id=0.
--- These are not orphan rows. All other email rows must belong to a real account
--- owned by the same user.
 INSERT INTO _cloudmail_integrity_guard(orphan_count)
 SELECT COUNT(*) FROM email e
-WHERE NOT (
-  (e.user_id = 0 AND e.account_id = 0 AND e.status IN (6, 7))
-  OR EXISTS (
-    SELECT 1 FROM account a
-    WHERE a.account_id = e.account_id AND a.user_id = e.user_id
-  )
-);
+WHERE NOT EXISTS (SELECT 1 FROM user u WHERE u.user_id = e.user_id)
+   OR NOT EXISTS (SELECT 1 FROM account a WHERE a.account_id = e.account_id AND a.user_id = e.user_id);
 
--- Historical releases could physically remove an email before defensive cascade
--- triggers existed, leaving a D1 attachment metadata row whose R2 object still exists.
--- Preserve those rows exactly as-is and register them for operator visibility instead
--- of deleting them or guessing a new parent. After this migration, strict triggers and
--- delete cascades prevent new dangling attachment rows from being created.
-CREATE TABLE IF NOT EXISTS cloudmail_legacy_attachment_orphan (
-  att_id INTEGER PRIMARY KEY,
-  email_id INTEGER NOT NULL,
-  account_id INTEGER NOT NULL,
-  user_id INTEGER NOT NULL,
-  object_key TEXT NOT NULL,
-  discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-INSERT OR IGNORE INTO cloudmail_legacy_attachment_orphan(
-  att_id, email_id, account_id, user_id, object_key
-)
-SELECT a.att_id, a.email_id, a.account_id, a.user_id, a.key
-FROM attachments a
-WHERE NOT EXISTS (
-  SELECT 1 FROM email e WHERE e.email_id = a.email_id
-);
-
--- Attachment ownership is defined by its parent email. Missing-parent rows that were
--- inherited from legacy releases are preserved/registered above. A row whose parent
--- still exists but whose account/user ownership disagrees is true corruption and must
--- still fail closed.
 INSERT INTO _cloudmail_integrity_guard(orphan_count)
 SELECT COUNT(*) FROM attachments a
-WHERE EXISTS (
-  SELECT 1 FROM email e WHERE e.email_id = a.email_id
-)
-AND NOT EXISTS (
-  SELECT 1 FROM email e
-  WHERE e.email_id = a.email_id
-    AND e.account_id = a.account_id
-    AND e.user_id = a.user_id
-);
+WHERE NOT EXISTS (SELECT 1 FROM user u WHERE u.user_id = a.user_id)
+   OR NOT EXISTS (SELECT 1 FROM account ac WHERE ac.account_id = a.account_id AND ac.user_id = a.user_id)
+   OR NOT EXISTS (SELECT 1 FROM email e WHERE e.email_id = a.email_id AND e.account_id = a.account_id AND e.user_id = a.user_id);
 
 INSERT INTO _cloudmail_integrity_guard(orphan_count)
 SELECT COUNT(*) FROM star s
@@ -109,30 +66,22 @@ BEGIN
   SELECT RAISE(ABORT, 'integrity:account.user_id');
 END;
 
--- Normal mail belongs to an account owned by the same user. CloudMail also has
--- an intentional unowned receive path: status=6 (SAVING) while parsing, followed
--- by status=7 (NOONE) when no recipient account exists. That path uses 0/0 ownership.
+-- Every email belongs to an account owned by the same user.
 CREATE TRIGGER IF NOT EXISTS trg_email_owner_insert
 BEFORE INSERT ON email
-WHEN NOT (
-  (NEW.user_id = 0 AND NEW.account_id = 0 AND NEW.status IN (6, 7))
-  OR EXISTS (
-    SELECT 1 FROM account a
-    WHERE a.account_id = NEW.account_id AND a.user_id = NEW.user_id
-  )
+WHEN NOT EXISTS (
+  SELECT 1 FROM account a
+  WHERE a.account_id = NEW.account_id AND a.user_id = NEW.user_id
 )
 BEGIN
   SELECT RAISE(ABORT, 'integrity:email.owner');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_email_owner_update
-BEFORE UPDATE OF account_id, user_id, status ON email
-WHEN NOT (
-  (NEW.user_id = 0 AND NEW.account_id = 0 AND NEW.status IN (6, 7))
-  OR EXISTS (
-    SELECT 1 FROM account a
-    WHERE a.account_id = NEW.account_id AND a.user_id = NEW.user_id
-  )
+BEFORE UPDATE OF account_id, user_id ON email
+WHEN NOT EXISTS (
+  SELECT 1 FROM account a
+  WHERE a.account_id = NEW.account_id AND a.user_id = NEW.user_id
 )
 BEGIN
   SELECT RAISE(ABORT, 'integrity:email.owner');

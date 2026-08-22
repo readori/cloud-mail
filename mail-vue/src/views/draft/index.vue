@@ -14,7 +14,7 @@
                :type="'draft'"
   >
     <template #name="props">
-      <span class="send-email">{{ props.email.receiveEmail?.join(',') || '(' + $t('noRecipient') + ')' }}</span>
+      <span class="send-email">{{ draftRecipients(props.email) || '(' + $t('noRecipient') + ')' }}</span>
     </template>
     <template #subject="props">
       {{ props.email.subject || '(' + $t('noSubject') + ')' }}
@@ -68,6 +68,14 @@ watch(() => draftStore.refreshList, async () => {
     scroll.value.handleList(list);
     scroll.value.emailList.push(...list)
 })
+
+function draftRecipients(draft) {
+  return [
+    ...(Array.isArray(draft.receiveEmail) ? draft.receiveEmail : []),
+    ...(Array.isArray(draft.cc) ? draft.cc : []),
+    ...(Array.isArray(draft.bcc) ? draft.bcc : []),
+  ].join(',')
+}
 
 function getEmailList() {
   return new Promise((resolve, reject) => {

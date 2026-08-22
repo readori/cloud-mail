@@ -3,7 +3,6 @@ const constant = {
 	JWT_UID: 'user_id:',
 	JWT_TOKEN: 'token:',
 	TOKEN_EXPIRE: 60 * 60 * 24 * 30,
-	REFRESH_TOKEN_EXPIRE: 60 * 60 * 24 * 180,
 	ATTACHMENT_PREFIX: 'attachments/',
 	BACKGROUND_PREFIX: 'static/background/',
 	ADMIN_ROLE: {

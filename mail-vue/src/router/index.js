@@ -7,10 +7,6 @@ import { isAuthenticated } from "@/auth/session.js";
 
 const routes = [
     {
-        path: '/mail',
-        redirect: '/mail/inbox'
-    },
-    {
         path: '/',
         name: 'layout',
         redirect: '/mail/inbox',

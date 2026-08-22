@@ -27,9 +27,7 @@
     "i18n:test": "node scripts/i18n-error-contract-test.mjs",
     "retention:test": "node scripts/retention-contract-test.mjs",
     "ai-privacy:test": "node scripts/ai-privacy-contract-test.mjs",
-    "audit:test": "pnpm test && pnpm security:test && pnpm security:migration-test && pnpm db:migration-test && pnpm init:security-test && pnpm config-secret:test && pnpm web-session:test && pnpm session:refresh-test && pnpm secret-storage:test && pnpm rich-email:test && pnpm email:list:test && pnpm push:contract-test && pnpm openapi:test && pnpm i18n:test && pnpm retention:test && pnpm upstream:310-test && pnpm ai-privacy:test",
-    "session:refresh-test": "node scripts/session-refresh-contract-test.mjs",
-    "upstream:310-test": "node scripts/upstream-310-contract-test.mjs"
+    "audit:test": "pnpm test && pnpm security:test && pnpm security:migration-test && pnpm db:migration-test && pnpm init:security-test && pnpm config-secret:test && pnpm web-session:test && pnpm secret-storage:test && pnpm rich-email:test && pnpm email:list:test && pnpm push:contract-test && pnpm openapi:test && pnpm i18n:test && pnpm retention:test && pnpm ai-privacy:test"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.7.5",

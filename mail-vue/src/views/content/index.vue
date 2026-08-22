@@ -25,9 +25,9 @@
                   <span><{{ email.sendEmail }}></span>
                 </div>
               </div>
-              <div class="receive"><span class="source">{{$t('recipient')}}</span><span class="receive-email">{{ formatRecipients(email.recipient) }}</span></div>
-              <div class="receive" v-if="hasRecipients(email.cc)"><span class="source">{{$t('cc')}}</span><span class="receive-email">{{ formatRecipients(email.cc) }}</span></div>
-              <div class="receive" v-if="hasRecipients(email.bcc)"><span class="source">{{$t('bcc')}}</span><span class="receive-email">{{ formatRecipients(email.bcc) }}</span></div>
+              <div class="receive"><span class="source">{{$t('recipient')}}</span><span class="receive-email">{{ formateReceive(email.recipient) }}</span></div>
+              <div class="receive" v-if="hasRecipients(email.cc)"><span class="source">{{$t('cc')}}</span><span class="receive-email">{{ formateReceive(email.cc) }}</span></div>
+              <div class="receive" v-if="hasRecipients(email.bcc)"><span class="source">{{$t('bcc')}}</span><span class="receive-email">{{ formateReceive(email.bcc) }}</span></div>
               <div class="date">
                 <div>{{ formatDetailDate(email.createTime) }}</div>
               </div>
@@ -114,22 +114,11 @@ onMounted(() => {
     email.unread = EmailUnreadEnum.READ;
     emailRead([email.emailId]);
   }
-  window.addEventListener('keydown', handleKeyDown);
 })
 
 onUnmounted(() => {
   emailStore.contentData.showUnread = false;
-  window.removeEventListener('keydown', handleKeyDown);
 })
-
-function handleKeyDown(event) {
-  if (event.key !== 'Escape') return;
-  if (showPreview.value) return;
-  if (document.querySelector('.el-message-box')) return;
-  const writeBox = document.querySelector('.write-box');
-  if (writeBox && writeBox.offsetParent !== null) return;
-  handleBack();
-}
 
 function openReply() {
   uiStore.writerRef.openReply(email)
@@ -161,26 +150,31 @@ function isImage(filename) {
   return ['png', 'jpg', 'jpeg', 'bmp', 'gif','jfif'].includes(getExtName(filename))
 }
 
-function recipientArray(value) {
-  if (Array.isArray(value)) return value
-  if (!value) return []
-  try {
-    const parsed = JSON.parse(value)
-    return Array.isArray(parsed) ? parsed : []
-  } catch (_) {
-    return []
+function parseRecipients(recipient) {
+  if (!recipient) return []
+
+  let value = recipient
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value)
+    } catch {
+      value = value.split(',').map(item => item.trim()).filter(Boolean)
+    }
   }
-}
 
-function formatRecipients(value) {
-  return recipientArray(value)
+  if (!Array.isArray(value)) return []
+  return value
       .map(item => typeof item === 'string' ? item : item?.address)
+      .map(item => String(item || '').trim())
       .filter(Boolean)
-      .join(', ')
 }
 
-function hasRecipients(value) {
-  return recipientArray(value).some(item => typeof item === 'string' ? item : item?.address)
+function hasRecipients(recipient) {
+  return parseRecipients(recipient).length > 0
+}
+
+function formateReceive(recipient) {
+  return parseRecipients(recipient).join(', ')
 }
 
 function changeStar() {
