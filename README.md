@@ -4,8 +4,6 @@ CloudMail/CF Mail contains four independently deployable components:
 
 - `mail-vue/` — Vue 3 web client.
 - `mail-worker/` — self-hostable CloudMail Cloudflare Worker API/backend.
-- `mail-ios/` — SwiftUI CF Mail iOS client with CloudMail HTTP accounts and direct IMAP/SMTP accounts.
-- `cfmail-push-gateway/` — small official CF Mail APNs provider. It is intentionally separate from self-hosted CloudMail.
 
 ## Web
 
