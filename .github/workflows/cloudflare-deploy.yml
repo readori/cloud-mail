@@ -1,25 +1,575 @@
-name: Cloudflare Deploy
+name: CloudMail CI & Cloudflare Deploy
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'mail-vue/**'
+      - 'mail-worker/**'
+      - '.github/workflows/cloudflare-deploy.yml'
+      - 'README.md'
+  pull_request:
+    paths:
+      - 'mail-vue/**'
+      - 'mail-worker/**'
+      - '.github/workflows/cloudflare-deploy.yml'
+      - 'README.md'
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Deploy mode'
+        description: 'Run mode'
         required: true
         default: deploy
         type: choice
         options:
+          - verify
           - deploy
           - deploy-and-migrate
 
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '9.15.9'
+
 jobs:
+  quality:
+    name: Test and build public Web/Worker stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: |
+            mail-worker/pnpm-lock.yaml
+            mail-vue/pnpm-lock.yaml
+
+      - name: Verify public source layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f mail-worker/package.json
+          test -f mail-worker/pnpm-lock.yaml
+          test -f mail-worker/wrangler.toml
+          test -f mail-vue/package.json
+          test -f mail-vue/pnpm-lock.yaml
+          echo '✅ mail-worker and mail-vue source layout detected'
+
+      - name: Install Worker dependencies
+        working-directory: mail-worker
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Web dependencies
+        working-directory: mail-vue
+        run: pnpm install --frozen-lockfile
+
+      # Public Worker checks intentionally run only tests that are self-contained
+      # inside mail-worker/mail-vue.
+      - name: Run Worker tests and security contracts
+        working-directory: mail-worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm test
+          pnpm security:test
+          pnpm security:migration-test
+          pnpm db:migration-test
+          pnpm init:security-test
+          pnpm config-secret:test
+          pnpm web-session:test
+          pnpm secret-storage:test
+          pnpm rich-email:test
+          pnpm email:list:test
+          pnpm push:contract-test
+          pnpm openapi:test
+          pnpm i18n:test
+          pnpm retention:test
+
+      # The legacy shared design-token contract depends on files outside the
+      # public Web/Worker scope, so CI uses the self-contained Web checks below.
+      - name: Run Web tests and contracts
+        working-directory: mail-vue
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm unit:test
+          pnpm security:test
+          pnpm contract:test
+          pnpm hygiene:test
+          pnpm a11y:test
+          pnpm workspace:test
+
+      - name: Build Web assets
+        working-directory: mail-vue
+        run: pnpm run build
+
+      - name: Smoke-test production Web build
+        working-directory: mail-vue
+        run: pnpm run e2e:smoke
+
   deploy:
-    name: CloudMail full-stack deployment
-    uses: ./.github/workflows/_deploy-cloudflare.yml
-    with:
-      source: full-stack
-      initialize_database: ${{ inputs.mode == 'deploy-and-migrate' }}
-    secrets: inherit
+    name: Deploy to Cloudflare
+    needs: quality
+    if: github.event_name == 'workflow_dispatch' && inputs.mode != 'verify'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    concurrency:
+      group: cloudmail-cloudflare-production
+      cancel-in-progress: false
+
+    env:
+      NAME: ${{ vars.NAME || 'cloud-mail' }}
+      CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN }}
+      DOMAIN: ${{ vars.DOMAIN }}
+      ADMIN: ${{ vars.ADMIN }}
+      D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+      KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
+      R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+      PROJECT_LINK: ${{ vars.PROJECT_LINK }}
+      AI_MODEL: ${{ vars.AI_MODEL || '@cf/meta/llama-3.1-8b-instruct' }}
+      ANALYSIS_CACHE: ${{ vars.ANALYSIS_CACHE || 'false' }}
+      PASSWORD_PBKDF2_ITERATIONS: ${{ vars.PASSWORD_PBKDF2_ITERATIONS || '150000' }}
+      PASSWORD_REHASH_ON_LOGIN: ${{ vars.PASSWORD_REHASH_ON_LOGIN || 'true' }}
+      EMAIL_TRASH_RETENTION_DAYS: ${{ vars.EMAIL_TRASH_RETENTION_DAYS || '30' }}
+      INIT_LOCKED: ${{ vars.INIT_LOCKED || 'false' }}
+      CLOUDFLARE_EMAIL: ${{ vars.CLOUDFLARE_EMAIL || 'false' }}
+      CFMAIL_PUSH_GATEWAY_URL: ${{ vars.CFMAIL_PUSH_GATEWAY_URL || '' }}
+      LINUXDO_CLIENT_ID: ${{ vars.LINUXDO_CLIENT_ID }}
+      LINUXDO_CALLBACK_URL: ${{ vars.LINUXDO_CALLBACK_URL }}
+      LINUXDO_SWITCH: ${{ vars.LINUXDO_SWITCH || 'false' }}
+
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      INIT_SECRET: ${{ secrets.INIT_SECRET }}
+      CONFIG_ENCRYPTION_KEY: ${{ secrets.CONFIG_ENCRYPTION_KEY }}
+      CONFIG_ENCRYPTION_KEY_PREVIOUS: ${{ secrets.CONFIG_ENCRYPTION_KEY_PREVIOUS }}
+      RESEND_WEBHOOK_SECRET: ${{ secrets.RESEND_WEBHOOK_SECRET }}
+      LINUXDO_CLIENT_SECRET: ${{ secrets.LINUXDO_CLIENT_SECRET }}
+
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: |
+            mail-worker/pnpm-lock.yaml
+            mail-vue/pnpm-lock.yaml
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          import os
+          import re
+          from urllib.parse import urlsplit
+
+          required = [
+              'CLOUDFLARE_API_TOKEN',
+              'CLOUDFLARE_ACCOUNT_ID',
+              'JWT_SECRET',
+              'INIT_SECRET',
+              'CONFIG_ENCRYPTION_KEY',
+              'DOMAIN',
+              'ADMIN',
+          ]
+          missing = [name for name in required if not os.environ.get(name, '').strip()]
+          if missing:
+              raise SystemExit('::error::Missing required deployment secrets/variables: ' + ', '.join(missing))
+
+          secrets = [
+              os.environ['JWT_SECRET'],
+              os.environ['INIT_SECRET'],
+              os.environ['CONFIG_ENCRYPTION_KEY'],
+          ]
+          if any(len(value) < 32 for value in secrets):
+              raise SystemExit('::error::JWT_SECRET, INIT_SECRET, and CONFIG_ENCRYPTION_KEY must each contain at least 32 characters')
+          if len(set(secrets)) != 3:
+              raise SystemExit('::error::JWT_SECRET, INIT_SECRET, and CONFIG_ENCRYPTION_KEY must be different values')
+          if any('\n' in value or '\r' in value for value in secrets):
+              raise SystemExit('::error::Application secrets must be single-line values')
+
+          try:
+              domains = json.loads(os.environ['DOMAIN'])
+          except json.JSONDecodeError as exc:
+              raise SystemExit(f'::error::DOMAIN must be a JSON array: {exc}')
+          domain_pattern = re.compile(r'^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$', re.I)
+          if not isinstance(domains, list) or not domains:
+              raise SystemExit('::error::DOMAIN must contain at least one mail domain')
+          if any(not isinstance(value, str) or not domain_pattern.fullmatch(value.strip()) for value in domains):
+              raise SystemExit('::error::DOMAIN must look like ["example.com"]')
+
+          admin = os.environ['ADMIN'].strip()
+          if '@' not in admin or len(admin) > 320:
+              raise SystemExit('::error::ADMIN must be a valid administrator email address')
+
+          custom_domain = os.environ.get('CUSTOM_DOMAIN', '').strip()
+          if custom_domain:
+              candidate = custom_domain if '://' in custom_domain else 'https://' + custom_domain
+              parsed = urlsplit(candidate)
+              if parsed.scheme != 'https' or not parsed.hostname or parsed.path not in ('', '/') or parsed.query or parsed.fragment:
+                  raise SystemExit('::error::CUSTOM_DOMAIN must be a hostname or an https:// hostname without a path')
+
+          print('✅ Deployment configuration validated')
+          PY
+
+      - name: Install Worker dependencies
+        working-directory: mail-worker
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Web dependencies
+        working-directory: mail-vue
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Web assets
+        working-directory: mail-vue
+        run: pnpm run build
+
+      - name: Resolve Cloudflare KV namespace
+        working-directory: mail-worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${KV_NAMESPACE_ID:-}" ]; then
+            KV_ID="$KV_NAMESPACE_ID"
+          else
+            KV_LIST="$(pnpm wrangler kv namespace list)"
+            KV_ID="$(jq -r --arg name "$NAME" '.[] | select(.title == $name) | .id' <<<"$KV_LIST" | head -n1)"
+            if [ -z "$KV_ID" ]; then
+              pnpm wrangler kv namespace create "$NAME"
+              KV_LIST="$(pnpm wrangler kv namespace list)"
+              KV_ID="$(jq -r --arg name "$NAME" '.[] | select(.title == $name) | .id' <<<"$KV_LIST" | head -n1)"
+            fi
+          fi
+          test -n "$KV_ID" || { echo '::error::Unable to resolve KV namespace'; exit 1; }
+          echo "RESOLVED_KV_NAMESPACE_ID=$KV_ID" >> "$GITHUB_ENV"
+
+      - name: Resolve Cloudflare D1 database
+        working-directory: mail-worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${D1_DATABASE_ID:-}" ]; then
+            D1_ID="$D1_DATABASE_ID"
+          else
+            DB_LIST="$(pnpm wrangler d1 list --json)"
+            D1_ID="$(jq -r --arg name "$NAME" '.[] | select(.name == $name) | .uuid' <<<"$DB_LIST" | head -n1)"
+            if [ -z "$D1_ID" ]; then
+              pnpm wrangler d1 create "$NAME"
+              DB_LIST="$(pnpm wrangler d1 list --json)"
+              D1_ID="$(jq -r --arg name "$NAME" '.[] | select(.name == $name) | .uuid' <<<"$DB_LIST" | head -n1)"
+            fi
+          fi
+          test -n "$D1_ID" || { echo '::error::Unable to resolve D1 database'; exit 1; }
+          echo "RESOLVED_D1_DATABASE_ID=$D1_ID" >> "$GITHUB_ENV"
+
+      - name: Render temporary Wrangler configuration
+        working-directory: mail-worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from urllib.parse import urlsplit
+
+          def toml_string(value):
+              return json.dumps(str(value), ensure_ascii=False)
+
+          def as_bool(name, default=False):
+              raw = os.environ.get(name, '').strip().lower()
+              if not raw:
+                  return default
+              if raw in {'1', 'true', 'yes', 'on'}:
+                  return True
+              if raw in {'0', 'false', 'no', 'off'}:
+                  return False
+              raise SystemExit(f'::error::{name} must be true or false')
+
+          name = os.environ['NAME'].strip()
+          domains = json.loads(os.environ['DOMAIN'])
+          custom_domain = os.environ.get('CUSTOM_DOMAIN', '').strip()
+          if custom_domain:
+              parsed = urlsplit(custom_domain if '://' in custom_domain else 'https://' + custom_domain)
+              custom_domain = parsed.hostname or ''
+
+          lines = [
+              f'name = {toml_string(name)}',
+              'main = "src/index.js"',
+              'compatibility_date = "2025-06-04"',
+              'keep_vars = true',
+              'workers_dev = true',
+              '',
+              '[observability]',
+              'enabled = true',
+              '',
+          ]
+
+          if custom_domain:
+              lines += [
+                  '[[routes]]',
+                  f'pattern = {toml_string(custom_domain)}',
+                  'custom_domain = true',
+                  '',
+              ]
+
+          lines += [
+              '[[d1_databases]]',
+              'binding = "db"',
+              f'database_name = {toml_string(name)}',
+              f'database_id = {toml_string(os.environ["RESOLVED_D1_DATABASE_ID"])}',
+              'migrations_dir = "migrations"',
+              '',
+              '[[kv_namespaces]]',
+              'binding = "kv"',
+              f'id = {toml_string(os.environ["RESOLVED_KV_NAMESPACE_ID"])}',
+              '',
+          ]
+
+          r2_bucket = os.environ.get('R2_BUCKET_NAME', '').strip()
+          if r2_bucket:
+              lines += [
+                  '[[r2_buckets]]',
+                  'binding = "r2"',
+                  f'bucket_name = {toml_string(r2_bucket)}',
+                  '',
+              ]
+
+          lines += [
+              '[ai]',
+              'binding = "ai"',
+              '',
+              '[assets]',
+              'binding = "assets"',
+              'directory = "./dist"',
+              'not_found_handling = "single-page-application"',
+              'run_worker_first = true',
+              '',
+              '[triggers]',
+              'crons = ["0 16 * * *"]',
+              '',
+          ]
+
+          if as_bool('CLOUDFLARE_EMAIL'):
+              lines += ['[[send_email]]', 'name = "email"', '']
+
+          iterations = int(os.environ.get('PASSWORD_PBKDF2_ITERATIONS', '150000'))
+          retention = int(os.environ.get('EMAIL_TRASH_RETENTION_DAYS', '30'))
+          lines += [
+              '[vars]',
+              f'ai_model = {toml_string(os.environ.get("AI_MODEL", ""))}',
+              f'analysis_cache = {str(as_bool("ANALYSIS_CACHE")).lower()}',
+              f'password_pbkdf2_iterations = {max(100000, min(iterations, 2000000))}',
+              f'password_rehash_on_login = {str(as_bool("PASSWORD_REHASH_ON_LOGIN", True)).lower()}',
+              f'email_trash_retention_days = {max(0, min(retention, 3650))}',
+              f'init_locked = {str(as_bool("INIT_LOCKED")).lower()}',
+              f'domain = {json.dumps(domains, ensure_ascii=False)}',
+              f'admin = {toml_string(os.environ["ADMIN"].strip())}',
+              f'project_link = {toml_string(os.environ.get("PROJECT_LINK", "").strip())}',
+              'oauth_state_required = true',
+              'allow_unsigned_resend_webhook = false',
+              f'linuxdo_client_id = {toml_string(os.environ.get("LINUXDO_CLIENT_ID", "").strip())}',
+              f'linuxdo_callback_url = {toml_string(os.environ.get("LINUXDO_CALLBACK_URL", "").strip())}',
+              f'linuxdo_switch = {str(as_bool("LINUXDO_SWITCH")).lower()}',
+              f'cfmail_push_gateway_url = {toml_string(os.environ.get("CFMAIL_PUSH_GATEWAY_URL", "").strip())}',
+              '',
+          ]
+
+          Path('wrangler-ci.toml').write_text('\n'.join(lines), encoding='utf-8')
+          print('✅ wrangler-ci.toml rendered')
+          PY
+          pnpm wrangler deploy --dry-run --config wrangler-ci.toml --outdir .wrangler-dry-run
+
+      - name: Prepare Worker secret file
+        working-directory: mail-worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              'jwt_secret': os.environ['JWT_SECRET'],
+              'init_secret': os.environ['INIT_SECRET'],
+              'config_encryption_key': os.environ['CONFIG_ENCRYPTION_KEY'],
+          }
+          optional = {
+              'config_encryption_key_previous': os.environ.get('CONFIG_ENCRYPTION_KEY_PREVIOUS', ''),
+              'resend_webhook_secret': os.environ.get('RESEND_WEBHOOK_SECRET', ''),
+              'linuxdo_client_secret': os.environ.get('LINUXDO_CLIENT_SECRET', ''),
+          }
+          payload.update({key: value for key, value in optional.items() if value})
+
+          path = Path('.wrangler-ci-secrets.json')
+          path.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+          path.chmod(0o600)
+          print('✅ Worker secret bindings prepared without logging values')
+          PY
+
+      - name: Deploy Worker and Web assets
+        id: deploy
+        working-directory: mail-worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          pnpm wrangler deploy \
+            --config wrangler-ci.toml \
+            --secrets-file .wrangler-ci-secrets.json \
+            2>&1 | tee deploy.log
+
+          WORKER_URL="$(python3 <<'PY'
+          import re
+          from pathlib import Path
+          text = Path('deploy.log').read_text(encoding='utf-8', errors='replace')
+          urls = re.findall(r'https://[A-Za-z0-9._-]+\.workers\.dev(?:/[^\s]*)?', text)
+          print(urls[-1].rstrip('.,;)\"\'') if urls else '')
+          PY
+          )"
+          if [ -n "$WORKER_URL" ]; then
+            echo "::add-mask::$WORKER_URL"
+            echo "worker_url=$WORKER_URL" >> "$GITHUB_OUTPUT"
+            echo '✅ workers.dev deployment URL detected'
+          else
+            echo 'worker_url=' >> "$GITHUB_OUTPUT"
+            echo '::warning::Wrangler output did not contain a workers.dev URL; CUSTOM_DOMAIN will be used for post-deploy checks if configured.'
+          fi
+
+      - name: Remove temporary Worker secret file
+        if: always()
+        working-directory: mail-worker
+        shell: bash
+        run: rm -f .wrangler-ci-secrets.json
+
+      - name: Initialize database
+        if: inputs.mode == 'deploy-and-migrate'
+        env:
+          DEPLOYED_WORKER_URL: ${{ steps.deploy.outputs.worker_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "${INIT_LOCKED:-false}" in
+            true|TRUE|1|yes|YES|on|ON)
+              echo '::error::INIT_LOCKED is enabled. Temporarily set INIT_LOCKED=false for a migration maintenance window.'
+              exit 78
+              ;;
+          esac
+
+          BASE_URL="$DEPLOYED_WORKER_URL"
+          if [ -z "$BASE_URL" ] && [ -n "${CUSTOM_DOMAIN:-}" ]; then
+            BASE_URL="$CUSTOM_DOMAIN"
+            case "$BASE_URL" in
+              http://*|https://*) ;;
+              *) BASE_URL="https://$BASE_URL" ;;
+            esac
+          fi
+          test -n "$BASE_URL" || { echo '::error::No deployment URL available for initialization'; exit 1; }
+
+          initialized=false
+          for attempt in $(seq 1 12); do
+            health_code="$(curl --silent --show-error --max-time 30 --output health-response.json --write-out '%{http_code}' "$BASE_URL/api/health" || printf '000')"
+            if [ "$health_code" = '200' ]; then
+              init_code="$(curl --silent --show-error \
+                --max-time 120 \
+                --request POST \
+                --header "X-Init-Secret: $INIT_SECRET" \
+                --header 'Accept: text/plain' \
+                --output init-response.txt \
+                --write-out '%{http_code}' \
+                "$BASE_URL/api/init" || printf '000')"
+              if [ "$init_code" -ge 200 ] && [ "$init_code" -lt 300 ]; then
+                cat init-response.txt
+                initialized=true
+                break
+              fi
+            fi
+            sleep 5
+          done
+          if [ "$initialized" != 'true' ]; then
+            echo '::error::Protected database initialization failed'
+            cat init-response.txt 2>/dev/null || true
+            exit 1
+          fi
+          echo '✅ Protected database initialization completed'
+
+      - name: Apply versioned D1 migrations
+        if: inputs.mode == 'deploy-and-migrate'
+        working-directory: mail-worker
+        run: pnpm wrangler d1 migrations apply "$NAME" --remote --config wrangler-ci.toml
+
+      - name: Post-deploy readiness check
+        env:
+          DEPLOYED_WORKER_URL: ${{ steps.deploy.outputs.worker_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_URL="$DEPLOYED_WORKER_URL"
+          if [ -z "$BASE_URL" ] && [ -n "${CUSTOM_DOMAIN:-}" ]; then
+            BASE_URL="$CUSTOM_DOMAIN"
+            case "$BASE_URL" in
+              http://*|https://*) ;;
+              *) BASE_URL="https://$BASE_URL" ;;
+            esac
+          fi
+          test -n "$BASE_URL" || { echo '::error::No deployment URL available for readiness check'; exit 1; }
+
+          ready=false
+          for attempt in $(seq 1 12); do
+            code="$(curl --silent --show-error --max-time 20 --output readiness.json --write-out '%{http_code}' "$BASE_URL/api/health" || printf '000')"
+            if [ "$code" = '200' ] && python3 - <<'PY'
+          import json
+          import sys
+          try:
+              body = json.load(open('readiness.json', encoding='utf-8'))
+          except Exception:
+              sys.exit(1)
+          sys.exit(0 if body.get('status') == 'ok' and body.get('ready') is True else 1)
+          PY
+            then
+              ready=true
+              break
+            fi
+            sleep 5
+          done
+
+          if [ "$ready" != 'true' ]; then
+            echo '::error::CloudMail post-deploy readiness check failed'
+            cat readiness.json 2>/dev/null || true
+            exit 1
+          fi
+          echo '✅ CloudMail deployment is ready'
