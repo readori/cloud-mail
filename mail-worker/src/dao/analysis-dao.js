@@ -10,14 +10,17 @@ function offsetModifier(offsetMinutes) {
 
 async function dayCount(c, table, extraWhere, offsetMinutes) {
 	const modifier = offsetModifier(offsetMinutes);
+	const back = offsetModifier(-Number(offsetMinutes));
+	// 直接比较 create_time 范围，便于命中 create_time 索引(上游 v3.3 优化)
 	const { results } = await c.env.db.prepare(`
 		SELECT DATE(create_time, ?) AS date, COUNT(*) AS total
 		FROM ${table}
-		WHERE DATE(create_time, ?) BETWEEN DATE('now', '-15 days', ?) AND DATE('now', '-1 day', ?)
+		WHERE create_time >= datetime('now', ?, 'start of day', '-15 days', ?)
+		AND create_time < datetime('now', ?, 'start of day', ?)
 		${extraWhere}
 		GROUP BY DATE(create_time, ?)
 		ORDER BY date ASC
-	`).bind(modifier, modifier, modifier, modifier, modifier).all();
+	`).bind(modifier, modifier, back, modifier, back, modifier).all();
 	return results;
 }
 

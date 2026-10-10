@@ -1,7 +1,8 @@
 import orm from '../entity/orm';
 import email from '../entity/email';
 import { attConst, emailConst, isDel, settingConst, userConst } from '../const/entity-const';
-import { and, desc, eq, gt, inArray, lt, count, asc, sql, ne, or, like, lte, gte } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, notInArray, lt, count, asc, sql, ne, or, like, lte, gte } from 'drizzle-orm';
+import { emailListColumns, emailBriefColumns, EMAIL_LIST_TEXT_LEN } from '../lib/email-list-columns';
 import { star } from '../entity/star';
 import settingService from './setting-service';
 import accountService from './account-service';
@@ -23,7 +24,7 @@ import account from "../entity/account";
 import { att } from '../entity/att';
 import { sanitizeEmailHtml } from '../utils/html-utils';
 import { normalizeEmailList, toId, toIdList, toInteger, toPageSize, toTrimmedString } from '../utils/input-utils';
-import { normalizeEmailCursor, normalizeEmailLatestQuery, normalizeEmailListQuery } from '../utils/email-query-utils';
+import { normalizeEmailCursor, normalizeEmailLatestQuery, normalizeEmailListQuery, normalizeFullFlag } from '../utils/email-query-utils';
 
 const emailService = {
 
@@ -43,7 +44,7 @@ const emailService = {
 
 	async list(c, params = {}, userId) {
 		const uid = toId(userId, 'userId');
-		const { accountId, size, timeSort, type, emailId, allReceive: requestedAllReceive } = normalizeEmailListQuery(params);
+		const { accountId, size, timeSort, type, emailId, allReceive: requestedAllReceive, full } = normalizeEmailListQuery(params);
 
 		let accountRow = null;
 		if (accountId > 0) {
@@ -60,31 +61,50 @@ const emailService = {
 			eq(account.isDel, isDel.NORMAL)
 		];
 		const cursorCondition = timeSort ? gt(email.emailId, emailId) : lt(email.emailId, emailId);
+		const columns = full ? emailListColumns : emailBriefColumns;
 		const query = orm(c)
-			.select({ ...email, starId: star.starId })
+			.select({ ...columns, starId: star.starId })
 			.from(email)
 			.leftJoin(star, and(eq(star.emailId, email.emailId), eq(star.userId, uid)))
-			.leftJoin(account, eq(account.accountId, email.accountId))
+			.innerJoin(account, eq(account.accountId, email.accountId))
 			.where(and(cursorCondition, ...baseConditions));
 		query.orderBy(timeSort ? asc(email.emailId) : desc(email.emailId));
 
 		const [rawList, totalRow, latestEmail] = await Promise.all([
 			query.limit(size).all(),
 			orm(c).select({ total: count() }).from(email)
-				.leftJoin(account, eq(account.accountId, email.accountId))
+				.innerJoin(account, eq(account.accountId, email.accountId))
 				.where(and(...baseConditions)).get(),
-			orm(c).select({ ...email }).from(email)
-				.leftJoin(account, eq(account.accountId, email.accountId))
+			orm(c).select({ emailId: email.emailId, accountId: email.accountId, userId: email.userId }).from(email)
+				.innerJoin(account, eq(account.accountId, email.accountId))
 				.where(and(...baseConditions))
 				.orderBy(desc(email.emailId)).limit(1).get()
 		]);
 		const list = rawList.map(item => ({ ...item, isStar: item.starId != null ? 1 : 0 }));
-		await this.emailAddAtt(c, list);
+		if (full) {
+			await this.emailAddAtt(c, list);
+		} else {
+			this.applyListText(list);
+		}
 		return {
 			list,
 			total: Number(totalRow?.total || 0),
 			latestEmail: latestEmail || { emailId: 0, accountId, userId: uid }
 		};
+	},
+
+	toListText(item) {
+		const raw = emailUtils.formatText(item.text) || emailUtils.htmlToText(item.content);
+		return raw.replace(/\s+/g, ' ').trim().slice(0, EMAIL_LIST_TEXT_LEN);
+	},
+
+	applyListText(list) {
+		for (const item of list) {
+			item.listText = this.toListText(item);
+			delete item.text;
+			delete item.content;
+		}
+		return list;
 	},
 
 	async delete(c, params = {}, userId) {
@@ -403,7 +423,13 @@ const emailService = {
 		const recipients = [...new Set((receiveEmail || []).map(item => String(item).trim().toLowerCase()).filter(Boolean))];
 		if (recipients.length === 0) return;
 		const { noRecipient } = await settingService.query(c);
-		const recipientConditions = recipients.map(recipient => sql`${account.email} COLLATE NOCASE = ${recipient}`);
+		// Plus Address：name+tag@domain 没有独立邮箱时投递到主地址 name@domain
+		const baseEmails = recipients
+			.filter(recipient => recipient.includes('+'))
+			.map(recipient => emailUtils.getBaseEmail(recipient))
+			.filter(Boolean);
+		const lookupEmails = [...new Set([...recipients, ...baseEmails])];
+		const recipientConditions = lookupEmails.map(recipient => sql`${account.email} COLLATE NOCASE = ${recipient}`);
 		const accountList = await orm(c).select().from(account).where(and(
 			or(...recipientConditions),
 			eq(account.isDel, isDel.NORMAL)
@@ -434,7 +460,8 @@ const emailService = {
 				bcc: '[]'
 			};
 			delete emailValues.emailId;
-			const accountRow = accountMap.get(recipient);
+			const accountRow = accountMap.get(recipient)
+				|| (recipient.includes('+') ? accountMap.get(emailUtils.getBaseEmail(recipient)) : undefined);
 			const activeUser = accountRow ? userMap.get(accountRow.userId) : null;
 			if (accountRow && activeUser) {
 				emailValues.userId = accountRow.userId;
@@ -540,6 +567,9 @@ const emailService = {
 			.orderBy(desc(email.emailId))
 			.limit(20);
 		await this.emailAddAtt(c, list);
+		for (const item of list) {
+			item.listText = this.toListText(item);
+		}
 		return list;
 	},
 
@@ -629,6 +659,7 @@ const emailService = {
 		const subject = toTrimmedString(params.subject, { name: 'subject', max: 200 });
 		const accountEmail = toTrimmedString(params.accountEmail, { name: 'accountEmail', max: 254 });
 		const userEmail = toTrimmedString(params.userEmail, { name: 'userEmail', max: 254 });
+		const full = normalizeFullFlag(params.full);
 		const conditions = [];
 		if (type === 'send') conditions.push(eq(email.type, emailConst.type.SEND));
 		if (type === 'receive') conditions.push(eq(email.type, emailConst.type.RECEIVE));
@@ -644,16 +675,24 @@ const emailService = {
 		conditions.push(ne(email.status, emailConst.status.SAVING));
 		const countConditions = [...conditions];
 		conditions.unshift(timeSort ? gt(email.emailId, emailId) : lt(email.emailId, emailId));
-		const query = orm(c).select({ ...email, userEmail: user.email })
+		const query = orm(c).select({ ...(full ? emailListColumns : emailBriefColumns), userEmail: user.email })
 			.from(email).leftJoin(user, eq(email.userId, user.userId)).where(and(...conditions));
 		query.orderBy(timeSort ? asc(email.emailId) : desc(email.emailId));
 		const [list, totalRow, latestEmail] = await Promise.all([
 			query.limit(size).all(),
-			orm(c).select({ total: count() }).from(email).leftJoin(user, eq(email.userId, user.userId)).where(and(...countConditions)).get(),
-			orm(c).select().from(email).where(and(eq(email.type, emailConst.type.RECEIVE), ne(email.status, emailConst.status.SAVING)))
+			// 不按用户邮箱搜索时 count 无需 join user
+			(userEmail
+				? orm(c).select({ total: count() }).from(email).leftJoin(user, eq(email.userId, user.userId))
+				: orm(c).select({ total: count() }).from(email)
+			).where(and(...countConditions)).get(),
+			orm(c).select({ emailId: email.emailId, accountId: email.accountId, userId: email.userId }).from(email).where(and(eq(email.type, emailConst.type.RECEIVE), ne(email.status, emailConst.status.SAVING)))
 				.orderBy(desc(email.emailId)).limit(1).get()
 		]);
-		await this.emailAddAtt(c, list);
+		if (full) {
+			await this.emailAddAtt(c, list);
+		} else {
+			this.applyListText(list);
+		}
 		return {
 			list,
 			total: Number(totalRow?.total || 0),
@@ -668,6 +707,9 @@ const emailService = {
 			.where(and(gt(email.emailId, emailId), eq(email.type, emailConst.type.RECEIVE), ne(email.status, emailConst.status.SAVING)))
 			.orderBy(desc(email.emailId)).limit(20);
 		await this.emailAddAtt(c, list);
+		for (const item of list) {
+			item.listText = this.toListText(item);
+		}
 		return list;
 	},
 
@@ -716,6 +758,48 @@ const emailService = {
 				AND u.is_del = ${isDel.NORMAL} AND u.status = ${userConst.status.NORMAL}
 			)
 		`).run();
+	},
+
+	// 自动清理：删除超过 autoCleanDays 天的邮件(排除指定用户)，每次 cron 分批处理
+	async autoClean(c) {
+		const { autoCleanDays, autoCleanExclude } = await settingService.query(c);
+		const days = Number(autoCleanDays);
+		if (!Number.isSafeInteger(days) || days <= 0) return;
+
+		const cutoff = dayjs().subtract(days, 'day').format('YYYY-MM-DD HH:mm:ss');
+		const excludeEmails = String(autoCleanExclude || '')
+			.split(/[,，]/)
+			.map(item => item.trim().toLowerCase())
+			.filter(Boolean)
+			.slice(0, 500);
+
+		let excludeUserIds = [];
+		if (excludeEmails.length) {
+			const rows = await orm(c)
+				.select({ userId: user.userId })
+				.from(user)
+				.where(or(...excludeEmails.map(item => sql`${user.email} COLLATE NOCASE = ${item}`)))
+				.all();
+			excludeUserIds = rows.map(row => row.userId);
+		}
+
+		const batchSize = 95;
+		const maxBatches = 50;
+		for (let batch = 0; batch < maxBatches; batch++) {
+			const conditions = [lt(email.createTime, cutoff)];
+			if (excludeUserIds.length) conditions.push(notInArray(email.userId, excludeUserIds));
+
+			const rows = await orm(c)
+				.select({ emailId: email.emailId })
+				.from(email)
+				.where(and(...conditions))
+				.limit(batchSize)
+				.all();
+			if (!rows.length) break;
+
+			await this.physicsDelete(c, { emailIds: rows.map(row => row.emailId) });
+			if (rows.length < batchSize) break;
+		}
 	},
 
 	async batchDelete(c, params = {}) {

@@ -1018,6 +1018,52 @@ export default {
         ]
       }
     },
+    "/oauth/github/login": {
+      "post": {
+        "operationId": "oauth_post_oauth_github_login",
+        "summary": "POST /oauth/github/login",
+        "responses": {
+          "200": {
+            "description": "Successful CloudMail response"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required or expired"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/oauth/google/login": {
+      "post": {
+        "operationId": "oauth_post_oauth_google_login",
+        "summary": "POST /oauth/google/login",
+        "responses": {
+          "200": {
+            "description": "Successful CloudMail response"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required or expired"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
     "/oauth/linuxDo/login": {
       "post": {
         "operationId": "oauth_post_oauth_linuxDo_login",
@@ -1045,6 +1091,29 @@ export default {
       "get": {
         "operationId": "oauth_get_oauth_linuxDo_state",
         "summary": "GET /oauth/linuxDo/state",
+        "responses": {
+          "200": {
+            "description": "Successful CloudMail response"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required or expired"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/oauth/state": {
+      "get": {
+        "operationId": "oauth_get_oauth_state",
+        "summary": "GET /oauth/state",
         "responses": {
           "200": {
             "description": "Successful CloudMail response"

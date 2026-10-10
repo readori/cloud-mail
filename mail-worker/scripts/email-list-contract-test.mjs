@@ -6,9 +6,10 @@ const newest = Number.MAX_SAFE_INTEGER;
 
 assert.deepEqual(
   normalizeEmailListQuery({ accountId: '7', allReceive: '0', emailId: '0', timeSort: '0', size: '50', type: '0' }),
-  { accountId: 7, size: 50, timeSort: 0, type: 0, emailId: newest, allReceive: 0 }
+  { accountId: 7, size: 50, timeSort: 0, type: 0, emailId: newest, allReceive: 0, full: true }
 );
 assert.equal(normalizeEmailListQuery({ accountId: '7', timeSort: '0', type: '1' }).emailId, newest);
+assert.equal(normalizeEmailListQuery({ accountId: '7', timeSort: '0', type: '1', full: '0' }).full, false);
 assert.equal(normalizeEmailListQuery({ accountId: '7', emailId: '42', timeSort: '0', type: '1' }).emailId, 42);
 assert.equal(normalizeEmailListQuery({ accountId: '7', emailId: '0', timeSort: '1', type: '0' }).emailId, 0);
 assert.equal(normalizeEmailListQuery({ accountId: '0', allReceive: '1', emailId: '0', timeSort: '0', type: '0' }).accountId, 0);

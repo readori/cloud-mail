@@ -270,7 +270,14 @@ const attService = {
 		}
 		const results = await c.env.db.batch(statements);
 		const keys = [...new Set(results.flatMap(result => result.results ? result.results.map(row => row.key) : []).filter(Boolean))];
-		if (keys.length) await this.batchDelete(c, keys);
+		if (keys.length) {
+			// 对象存储删除失败不影响数据库记录的删除结果
+			try {
+				await this.batchDelete(c, keys);
+			} catch (error) {
+				console.error('删除附件文件失败：', error);
+			}
+		}
 	},
 
 	async batchDelete(c, keys) {

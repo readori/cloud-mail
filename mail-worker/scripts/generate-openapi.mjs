@@ -30,7 +30,7 @@ for (const file of files) {
     if (params.length) routes.get(normalized)[method].parameters = params;
   }
 }
-const publicRoutes = new Set(['/login','/register','/health','/init','/init/{secret}','/setting/websiteConfig','/oauth/linuxDo/state','/oauth/linuxDo/login','/webhooks']);
+const publicRoutes = new Set(['/login','/register','/health','/init','/init/{secret}','/setting/websiteConfig','/oauth/state','/oauth/linuxDo/state','/oauth/linuxDo/login','/oauth/github/login','/oauth/google/login','/webhooks']);
 for (const [route, methods] of routes) {
   for (const op of Object.values(methods)) if (!publicRoutes.has(route)) op.security = [{ webSession: [] }, { bearerAuth: [] }];
 }

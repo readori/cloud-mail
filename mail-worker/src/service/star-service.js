@@ -4,11 +4,12 @@ import emailService from './email-service';
 import BizError from '../error/biz-error';
 import { and, count, desc, eq, lt, sql, inArray } from 'drizzle-orm';
 import email from '../entity/email';
+import { emailListColumns, emailBriefColumns } from '../lib/email-list-columns';
 import { isDel } from '../const/entity-const';
 import attService from './att-service';
 import { t } from '../i18n/i18n';
 import { toId, toPageSize } from '../utils/input-utils';
-import { normalizeEmailCursor } from '../utils/email-query-utils';
+import { normalizeEmailCursor, normalizeFullFlag } from '../utils/email-query-utils';
 
 const starService = {
 	async add(c, params = {}, userId) {
@@ -33,6 +34,7 @@ const starService = {
 		// Starred 页面第一页也发送 0，按“最新一封之前”处理。
 		const cursor = normalizeEmailCursor(params.emailId, { timeSort: 0 });
 		const size = toPageSize(params.size, { defaultValue: 20, max: 50 });
+		const full = normalizeFullFlag(params.full);
 		const baseConditions = and(
 			eq(star.userId, userId),
 			eq(email.userId, userId),
@@ -43,7 +45,7 @@ const starService = {
 			orm(c).select({
 				isStar: sql`1`.as('isStar'),
 				starId: star.starId,
-				...email
+				...(full ? emailListColumns : emailBriefColumns)
 			}).from(star)
 				.innerJoin(email, eq(email.emailId, star.emailId))
 				.where(and(baseConditions, lt(star.emailId, cursor)))
@@ -56,15 +58,19 @@ const starService = {
 				.get()
 		]);
 
-		const emailIds = list.map(item => item.emailId);
-		const attsList = emailIds.length ? await attService.selectByEmailIds(c, emailIds) : [];
-		for (const emailRow of list) {
-			emailRow.attList = attsList.filter(attRow => attRow.emailId === emailRow.emailId);
+		if (full) {
+			const emailIds = list.map(item => item.emailId);
+			const attsList = emailIds.length ? await attService.selectByEmailIds(c, emailIds) : [];
+			for (const emailRow of list) {
+				emailRow.attList = attsList.filter(attRow => attRow.emailId === emailRow.emailId);
+			}
+		} else {
+			emailService.applyListText(list);
 		}
 		return {
 			list,
 			total: Number(totalRow?.total || 0),
-			latestEmail: list[0] || { emailId: 0 }
+			latestEmail: list[0] ? { emailId: list[0].emailId } : { emailId: 0 }
 		};
 	},
 

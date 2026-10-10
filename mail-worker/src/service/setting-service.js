@@ -5,7 +5,8 @@ import { verifyRecordType } from '../const/entity-const';
 import fileUtils from '../utils/file-utils';
 import r2Service from './r2-service';
 import { getAuthToken } from '../security/auth-session';
-import { decryptSettingSecrets, encryptConfigSecret, encryptSettingSecrets, hasUnprotectedSettingSecrets } from '../utils/config-secret-crypto';
+import { configuredSecretFields, decryptSettingSecrets, encryptConfigSecret, encryptSettingSecrets, hasUnprotectedSettingSecrets } from '../utils/config-secret-crypto';
+import constant from '../const/constant';
 import BizError from '../error/biz-error';
 import { t } from '../i18n/i18n';
 import verifyRecordService from './verify-record-service';
@@ -30,20 +31,61 @@ const PERSISTED_KEYS = new Set([
 	'notice', 'noRecipient', 'loginDomain', 'bucket', 'region', 'endpoint', 's3AccessKey',
 	's3SecretKey', 'forcePathStyle', 'customDomain', 'tgMsgFrom', 'tgMsgTo', 'tgMsgText',
 	'minEmailPrefix', 'emailPrefixFilter', 'blackSubject', 'blackContent', 'blackFrom', 'aiCode',
-	'aiCodeFilter'
+	'aiCodeFilter', 'linuxdoClientId', 'linuxdoClientSecret', 'linuxdoSwitch', 'githubClientId',
+	'githubClientSecret', 'githubSwitch', 'googleClientId', 'googleClientSecret', 'googleSwitch',
+	'autoCleanDays', 'autoCleanExclude', 'webhookUrl', 'webhookStatus', 'webhookRetry', 'webhookSecret'
 ]);
 
 const BINARY_KEYS = new Set([
 	'register', 'receive', 'manyEmail', 'addEmail', 'send', 'tgBotStatus', 'forwardStatus',
-	'ruleType', 'notice', 'noRecipient', 'loginDomain', 'forcePathStyle', 'aiCode'
+	'ruleType', 'notice', 'noRecipient', 'loginDomain', 'forcePathStyle', 'aiCode',
+	'linuxdoSwitch', 'githubSwitch', 'googleSwitch', 'webhookStatus'
 ]);
 const TRISTATE_KEYS = new Set(['addEmailVerify', 'registerVerify', 'regKey']);
-const SECRET_KEYS = new Set(['secretKey', 'tgBotToken', 's3AccessKey', 's3SecretKey']);
+// resendTokens 单独处理(按域名脱敏)，其余敏感字段统一加密存储并脱敏返回
+const SECRET_KEYS = new Set(configuredSecretFields().filter(key => key !== 'resendTokens'));
 const LIST_TEXT_KEYS = new Set([
 	'tgChatId', 'forwardEmail', 'ruleEmail', 'emailPrefixFilter', 'blackSubject', 'blackContent',
-	'blackFrom', 'aiCodeFilter'
+	'blackFrom', 'aiCodeFilter', 'autoCleanExclude'
 ]);
+
+// v3.2/v3.3 新增的设置字段。未执行 /init 的旧库缺列时会自动补齐，避免整站设置查询报错。
+const UPSTREAM_SETTING_COLUMNS = [
+	`ALTER TABLE setting ADD COLUMN linuxdo_client_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE setting ADD COLUMN linuxdo_client_secret TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE setting ADD COLUMN linuxdo_switch INTEGER NOT NULL DEFAULT 1`,
+	`ALTER TABLE setting ADD COLUMN github_client_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE setting ADD COLUMN github_client_secret TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE setting ADD COLUMN github_switch INTEGER NOT NULL DEFAULT 1`,
+	`ALTER TABLE setting ADD COLUMN google_client_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE setting ADD COLUMN google_client_secret TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE setting ADD COLUMN google_switch INTEGER NOT NULL DEFAULT 1`,
+	`ALTER TABLE setting ADD COLUMN auto_clean_days INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE setting ADD COLUMN auto_clean_exclude TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE setting ADD COLUMN webhook_url TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE setting ADD COLUMN webhook_status INTEGER NOT NULL DEFAULT 1`,
+	`ALTER TABLE setting ADD COLUMN webhook_retry INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE setting ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''`
+];
+
+const UPSTREAM_SETTING_COLUMN_NAMES = UPSTREAM_SETTING_COLUMNS.map(statement => /ADD COLUMN (\w+)/.exec(statement)[1]);
+
+const SETTING_DEFAULTS = {
+	linuxdoClientId: '', linuxdoClientSecret: '', linuxdoSwitch: 1,
+	githubClientId: '', githubClientSecret: '', githubSwitch: 1,
+	googleClientId: '', googleClientSecret: '', googleSwitch: 1,
+	autoCleanDays: 0, autoCleanExclude: '',
+	webhookUrl: '', webhookStatus: 1, webhookRetry: 0, webhookSecret: ''
+};
+
 const TEXT_LIMITS = {
+	linuxdoClientId: 512,
+	githubClientId: 512,
+	googleClientId: 512,
+	linuxdoClientSecret: 1024,
+	githubClientSecret: 1024,
+	googleClientSecret: 1024,
+	webhookSecret: 1024,
 	title: 200,
 	r2Domain: 2048,
 	background: 4096,
@@ -97,6 +139,23 @@ function parseDomains(c) {
 	return normalized;
 }
 
+function applyRuntimeFields(c, row) {
+	for (const [key, value] of Object.entries(SETTING_DEFAULTS)) {
+		if (row[key] === undefined || row[key] === null) row[key] = value;
+	}
+	row.domainList = parseDomains(c).map(item => `@${item}`);
+	row.projectLink = parseBooleanEnv(c.env.project_link, true);
+	// 兼容旧版通过环境变量配置的 Linux DO 登录：后台未填写时回退到环境变量
+	if (!row.linuxdoClientId && c.env.linuxdo_client_id) {
+		row.linuxdoClientId = String(c.env.linuxdo_client_id);
+		row.linuxdoSwitch = parseBooleanEnv(c.env.linuxdo_switch, false) ? 0 : 1;
+	}
+	if (!row.linuxdoClientSecret && c.env.linuxdo_client_secret) row.linuxdoClientSecret = String(c.env.linuxdo_client_secret);
+	row.linuxdoCallbackUrl = c.env.linuxdo_callback_url || '';
+	row.emailPrefixFilter = String(row.emailPrefixFilter || '').split(',').map(item => item.trim().toLowerCase()).filter(Boolean);
+	return row;
+}
+
 async function hasAuthenticatedSession(c) {
 	const payload = await jwtUtils.verifyToken(c, getAuthToken(c).token);
 	if (!payload || !payload.userId || !payload.token) return false;
@@ -133,6 +192,9 @@ function normalizeSettingValue(key, value) {
 	if (key === 'noticeDuration') return toInteger(value, { name: key, required: true, min: 0, max: 86_400_000 });
 	if (key === 'noticeOffset') return toInteger(value, { name: key, required: true, min: -10_000, max: 10_000 });
 	if (key === 'noticeWidth') return toInteger(value, { name: key, required: true, min: 0, max: 10_000 });
+	if (key === 'autoCleanDays') return toInteger(value, { name: key, required: true, min: 0, max: 36_500 });
+	if (key === 'webhookRetry') return toInteger(value, { name: key, required: true, min: 0, max: 10 });
+	if (key === 'webhookUrl') return normalizeConfigUrl(value, { name: 'Webhook地址', allowHttp: true });
 	if (key === 'loginOpacity') {
 		const number = Number(value);
 		if (!Number.isFinite(number) || number < 0 || number > 1) throw new BizError('loginOpacity必须在0到1之间', 400);
@@ -150,8 +212,35 @@ function normalizeSettingValue(key, value) {
 }
 
 const settingService = {
+	async ensureLatestColumns(c) {
+		for (const statement of UPSTREAM_SETTING_COLUMNS) {
+			try { await c.env.db.prepare(statement).run(); }
+			catch (error) {
+				if (!/duplicate column/i.test(String(error?.message || ''))) console.warn(`跳过设置字段迁移：${error?.message || error}`);
+			}
+		}
+	},
+
+	// 注意：SQLite 中不存在的双引号列名会被当作字符串字面量，缺列时 SELECT 不会报错而是返回列名本身，
+	// 所以这里通过 PRAGMA 检查真实表结构，而不是依赖查询报错。
+	async ensureColumnsIfMissing(c) {
+		const { results } = await c.env.db.prepare('PRAGMA table_info(setting)').all();
+		const existing = new Set((results || []).map(column => column.name));
+		if (!existing.size) return;
+		if (UPSTREAM_SETTING_COLUMN_NAMES.some(name => !existing.has(name))) {
+			// 新版本代码已部署但尚未执行 /init：自动补齐缺失字段
+			console.warn('设置表缺少新字段，自动补齐');
+			await this.ensureLatestColumns(c);
+		}
+	},
+
+	async selectRow(c) {
+		await this.ensureColumnsIfMissing(c);
+		return orm(c).select().from(setting).get();
+	},
+
 	async migrateSecrets(c) {
-		const row = await orm(c).select().from(setting).get();
+		const row = await this.selectRow(c);
 		if (!row) return;
 		const normalized = { ...row, resendTokens: String(row.resendTokens || '{}') };
 		let protectedResult;
@@ -162,18 +251,16 @@ const settingService = {
 		}
 		const { row: protectedRow, changed } = protectedResult;
 		if (!changed) return;
-		await orm(c).update(setting).set({
-			secretKey: protectedRow.secretKey,
-			tgBotToken: protectedRow.tgBotToken,
-			resendTokens: protectedRow.resendTokens,
-			s3AccessKey: protectedRow.s3AccessKey,
-			s3SecretKey: protectedRow.s3SecretKey
-		}).run();
+		const update = {};
+		for (const field of configuredSecretFields()) {
+			if (protectedRow[field] !== undefined && protectedRow[field] !== normalized[field]) update[field] = protectedRow[field];
+		}
+		if (Object.keys(update).length) await orm(c).update(setting).set(update).run();
 	},
 
 	async refresh(c) {
 		await this.migrateSecrets(c);
-		const storageRow = await orm(c).select().from(setting).get();
+		const storageRow = await this.selectRow(c);
 		if (!storageRow) throw new BizError('数据库未初始化。');
 		// KV stores the same encrypted envelopes as D1. Plaintext exists only in request memory.
 		await c.env.kv.put(KvConst.SETTING, JSON.stringify(storageRow));
@@ -187,14 +274,7 @@ const settingService = {
 	async query(c) {
 		let cached = c.get?.('setting');
 		if (cached) {
-			const row = clone(cached);
-			row.domainList = parseDomains(c).map(item => `@${item}`);
-			row.projectLink = parseBooleanEnv(c.env.project_link, true);
-			row.linuxdoClientId = c.env.linuxdo_client_id || '';
-			row.linuxdoCallbackUrl = c.env.linuxdo_callback_url || '';
-			row.linuxdoSwitch = parseBooleanEnv(c.env.linuxdo_switch, false);
-			row.emailPrefixFilter = String(row.emailPrefixFilter || '').split(',').map(item => item.trim().toLowerCase()).filter(Boolean);
-			return row;
+			return applyRuntimeFields(c, clone(cached));
 		}
 		const encrypted = await c.env.kv.get(KvConst.SETTING, { type: 'json' });
 		if (!encrypted) throw new BizError('数据库未初始化。');
@@ -206,12 +286,7 @@ const settingService = {
 		const row = await decryptSettingSecrets(c.env, encrypted);
 		row.resendTokens = safeJsonParse(row.resendTokens, {});
 		if (!row.resendTokens || typeof row.resendTokens !== 'object' || Array.isArray(row.resendTokens)) row.resendTokens = {};
-		row.domainList = parseDomains(c).map(item => `@${item}`);
-		row.projectLink = parseBooleanEnv(c.env.project_link, true);
-		row.linuxdoClientId = c.env.linuxdo_client_id || '';
-		row.linuxdoCallbackUrl = c.env.linuxdo_callback_url || '';
-		row.linuxdoSwitch = parseBooleanEnv(c.env.linuxdo_switch, false);
-		row.emailPrefixFilter = String(row.emailPrefixFilter || '').split(',').map(item => item.trim().toLowerCase()).filter(Boolean);
+		applyRuntimeFields(c, row);
 		c.set?.('setting', clone(row));
 		return row;
 	},
@@ -228,6 +303,10 @@ const settingService = {
 		row.s3AccessKey = mask(row.s3AccessKey, 12);
 		row.s3SecretKey = mask(row.s3SecretKey, 12);
 		row.tgBotToken = mask(row.tgBotToken, 20);
+		row.linuxdoClientSecret = mask(row.linuxdoClientSecret, 6);
+		row.githubClientSecret = mask(row.githubClientSecret, 6);
+		row.googleClientSecret = mask(row.googleClientSecret, 6);
+		row.webhookSecret = mask(row.webhookSecret, 4);
 		row.hasR2 = !!c.env.r2;
 		row.hasCfEmail = !!c.env.email;
 		row.regVerifyOpen = false;
@@ -253,7 +332,7 @@ const settingService = {
 			update.resendTokens = JSON.stringify(normalizeResendTokens(current.resendTokens, params.resendTokens));
 		}
 		if (Object.keys(update).length === 0) return;
-		for (const key of ['secretKey', 'tgBotToken', 'resendTokens', 's3AccessKey', 's3SecretKey']) {
+		for (const key of configuredSecretFields()) {
 			if (!Object.prototype.hasOwnProperty.call(update, key)) continue;
 			const value = String(update[key] ?? '');
 			if (!value) { update[key] = ''; continue; }
@@ -263,6 +342,7 @@ const settingService = {
 				throw new BizError(`无法保存敏感配置 ${key}: ${error?.message || 'CONFIG_ENCRYPTION_KEY 无效'}`, 503);
 			}
 		}
+		await this.ensureColumnsIfMissing(c);
 		await orm(c).update(setting).set(update).run();
 		await this.refresh(c);
 	},
@@ -354,6 +434,10 @@ const settingService = {
 			linuxdoClientId: row.linuxdoClientId,
 			linuxdoCallbackUrl: row.linuxdoCallbackUrl,
 			linuxdoSwitch: row.linuxdoSwitch,
+			githubClientId: row.githubClientId,
+			githubSwitch: row.githubSwitch,
+			googleClientId: row.googleClientId,
+			googleSwitch: row.googleSwitch,
 			minEmailPrefix: row.minEmailPrefix,
 			projectLink: row.projectLink
 		};

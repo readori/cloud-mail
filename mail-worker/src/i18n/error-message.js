@@ -64,7 +64,8 @@ const EN_EXACT = new Map([
   ['附件删除字段无效', 'Invalid attachment deletion field.'],
   ['请先配置 Telegram Bot Token', 'Configure a Telegram Bot Token first.'],
   ['请先配置有效的 Telegram Chat ID', 'Configure a valid Telegram Chat ID first.'],
-  ['CSRF validation failed', 'CSRF validation failed.']
+  ['CSRF validation failed', 'CSRF validation failed.'],
+  ['数据库结构未更新，请执行 /init 初始化 Database schema outdated', 'Database schema is outdated. Run POST /api/init with the init secret to upgrade it.']
 ]);
 
 const RESOURCE_EN_EXACT = new Map(
@@ -77,7 +78,8 @@ const ZH_EXACT = new Map([
   ['数据库未初始化 Database not initialized.', '数据库未初始化。'],
   ['KV数据库未绑定 KV database not bound', 'KV 数据库未绑定。'],
   ['D1数据库未绑定 D1 database not bound', 'D1 数据库未绑定。'],
-  ['服务器内部错误 Internal server error', '服务器内部错误']
+  ['服务器内部错误 Internal server error', '服务器内部错误'],
+  ['数据库结构未更新，请执行 /init 初始化 Database schema outdated', '数据库结构未更新，请使用初始化密钥执行 POST /api/init 完成数据库升级']
 ]);
 
 const FIELD_NAMES = new Map([

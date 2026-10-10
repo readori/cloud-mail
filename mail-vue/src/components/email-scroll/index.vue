@@ -38,13 +38,12 @@
                         :key="keyCount"
         >
           <template #default="{ data: item, index }" >
-            <div :class="'email-row ' + props.type"
+            <div :class="['email-row', props.type, { 'right-checked': item.rightChecked }]"
                  :data-checked="item.checked"
                  @click="jumpDetails(item)"
                  v-if="!item.expand"
                  :key="item.emailId"
                  @contextmenu="handleContextmenu($event, item)"
-                 :style="item.rightChecked ? 'background: #FDF6EC' : ''"
             >
               <el-checkbox :class=" props.type === 'all-email' ? 'all-email-checkbox' : 'checkbox'"
                            v-model="item.checked" @click.stop></el-checkbox>
@@ -89,7 +88,7 @@
                         </slot>
                       </span>
                     </span>
-                    <span class="email-content">{{ item.formatText || '\u200B' }}</span>
+                    <span class="email-content">{{ item.listText || item.text || '\u200B' }}</span>
                   </div>
                   <div class="user-info" v-if="showUserInfo">
                     <div class="user">
@@ -386,7 +385,7 @@ function onScroll(e) {
 }
 
 const { arrivedState } = useScroll(scrollbarRef, {
-  offset: { bottom: 1200 }
+  offset: { bottom: isMobile.value ? 2200 : 1500 }
 })
 
 
@@ -487,12 +486,22 @@ window.addEventListener('wheel', (event) => {
   }
 })
 
+// 列表是摘要数据时需要等完整数据(正文/附件)加载后才能回复/转发
+function fullEmailOf(email) {
+  if (emailStore.detailMap[email.emailId]) return emailStore.detailMap[email.emailId]
+  return email.content !== undefined || email.text !== undefined ? email : null
+}
+
 function openReply(email) {
-  uiStore.writerRef.openReply(email)
+  const fullEmail = fullEmailOf(email)
+  if (!fullEmail) return
+  uiStore.writerRef.openReply(fullEmail)
 }
 
 function openForward(email) {
-  uiStore.writerRef.openForward(email)
+  const fullEmail = fullEmailOf(email)
+  if (!fullEmail) return
+  uiStore.writerRef.openForward(fullEmail)
 }
 
 function visibleChange(e) {
@@ -714,7 +723,7 @@ function addItem(email) {
     return false;
   }
 
-  email.formatText = htmlToText(email);
+  if (!email.listText) email.listText = htmlToText(email);
   email.formatCreateTime = fromNow(email.formatCreateTime);
 
   if (props.timeSort) {
@@ -859,7 +868,7 @@ function getEmailList(refresh = false) {
 
 function handleList(list) {
   list.forEach(email => {
-    email.formatText = htmlToText(email)
+    if (!email.listText) email.listText = htmlToText(email);
     email.formatCreateTime = fromNow(email.createTime);
     email.test = t('received')
     const statusIconMap = {
@@ -1226,6 +1235,11 @@ function loadData() {
   &:hover {
     background-color: var(--email-hover-background);
     z-index: 0;
+  }
+
+  &.right-checked,
+  &.right-checked:hover {
+    background-color: var(--email-right-click-background);
   }
 
   /*&[data-checked="true"] {

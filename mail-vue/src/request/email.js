@@ -1,7 +1,8 @@
 import http from '@/axios/index.js';
 import {normalizePageSize} from '@/request/params.js'
 
-export function emailList(accountId, allReceive, emailId, timeSort, size, type) {
+// full: 1 = 完整字段(正文/附件)，0 = 列表摘要
+export function emailList(accountId, allReceive, emailId, timeSort, size, type, full) {
     const params = {
         accountId,
         allReceive,
@@ -9,6 +10,8 @@ export function emailList(accountId, allReceive, emailId, timeSort, size, type) 
         size: normalizePageSize(size, 50, 20),
         type
     }
+
+    if (full !== undefined) params.full = full
 
     // emailId=0 is an intentional first-page cursor. Descending requests omit
     // it so the Worker starts from the newest message; ascending requests keep

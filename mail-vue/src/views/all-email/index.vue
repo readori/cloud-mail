@@ -90,7 +90,7 @@
 <script setup>
 import {starAdd, starCancel} from "@/request/star.js";
 import emailScroll from "@/components/email-scroll/index.vue"
-import {computed, defineOptions, reactive, ref, watch, onMounted} from "vue";
+import {computed, defineOptions, reactive, ref, watch, onMounted, onUnmounted} from "vue";
 import {useEmailStore} from "@/store/email.js";
 import {
   allEmailList,
@@ -280,7 +280,7 @@ function typeSelectChange() {
 }
 
 function jumpContent(email) {
-  emailStore.contentData.email = email
+  emailStore.contentData.email = emailStore.toContentEmail(email)
   emailStore.contentData.delType = 'physics'
   emailStore.contentData.showStar = false
   emailStore.contentData.showReply = false
@@ -292,16 +292,27 @@ function getEmailList(emailId, size) {
   const query = {size, ...params}
   // 降序第一页不发送 emailId=0，兼容旧后端；升序第一页的 0 是有效游标。
   if (emailId > 0 || params.timeSort === 1) query.emailId = emailId
-  return allEmailList(query)
+  // 先取摘要列表快速渲染，再后台拉取完整数据(正文/附件)用于详情
+  return emailStore.fetchList(full => allEmailList({...query, full}))
 }
+
+// 组件卸载(如退出登录)后停止轮询，避免旧循环访问已销毁的 scroll 引用
+let pollingStopped = false
+onUnmounted(() => {
+  pollingStopped = true
+})
 
 async function latest() {
 
-  while (true) {
+  while (!pollingStopped) {
 
     let autoRefresh = settingStore.settings.autoRefresh;
 
     await sleep(autoRefresh > 1 ? autoRefresh * 1000 : 3000);
+
+    if (pollingStopped || !sysEmailScroll.value) {
+      continue
+    }
 
     const latestId = sysEmailScroll.value.latestEmail?.emailId
 
@@ -340,9 +351,11 @@ async function latest() {
         continue
       }
 
+      emailStore.applyFullList(list)
+
       for (let email of list) {
 
-        sysEmailScroll.value.addItem(email)
+        sysEmailScroll.value?.addItem(email)
         await sleep(50)
 
       }

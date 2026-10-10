@@ -51,6 +51,12 @@ const accountService = {
 		if (existing?.isDel === isDel.DELETE) throw new BizError(t('isDelAccount'));
 		if (existing) throw new BizError(t('isRegAccount'), 409);
 
+		// Plus Address：name+tag@domain 只能由主地址 name@domain 的拥有者添加
+		if (prefix.includes('+')) {
+			const baseAccount = await this.selectByEmailIncludeDel(c, emailUtils.getBaseEmail(email));
+			if (!baseAccount || Number(baseAccount.userId) !== Number(userId)) throw new BizError(t('notOwner'), 403);
+		}
+
 		const userRow = await userService.selectById(c, toId(userId, 'userId'));
 		if (!userRow) throw new BizError(t('authExpired'), 401);
 		const roleRow = await roleService.selectById(c, userRow.type);

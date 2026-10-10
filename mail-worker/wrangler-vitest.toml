@@ -18,4 +18,4 @@ cors_origins = "http://localhost"
 jwt_secret = "vitest-jwt-secret-32-characters-minimum-value"
 init_secret = "vitest-init-secret-32-characters-minimum-value"
 config_encryption_key = "vitest-config-key-32-characters-minimum-value"
-password_pbkdf2_iterations = 150000
+password_pbkdf2_iterations = 100000

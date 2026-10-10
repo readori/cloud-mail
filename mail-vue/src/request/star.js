@@ -9,8 +9,9 @@ export function starCancel(emailId) {
     return http.delete('/star/cancel', {params: {emailId}})
 }
 
-export function starList(emailId, size) {
+export function starList(emailId, size, full) {
     const params = {size: normalizePageSize(size, 50, 20)}
+    if (full !== undefined) params.full = full
     // First page intentionally omits the zero cursor.
     if (Number(emailId) > 0) params.emailId = emailId
     return http.get('/star/list', {params})

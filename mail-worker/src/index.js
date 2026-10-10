@@ -11,11 +11,11 @@ import openAPIDocument from './openapi/openapi-document.js';
 
 const STATIC_CSP = [
 	"default-src 'self'",
-	"script-src 'self' https://challenges.cloudflare.com 'sha256-9akFwN7T458ofhT9Ict5/2wwvSE9wFPMwRoVnR27QDc='",
+	"script-src 'self' https://challenges.cloudflare.com https://static.cloudflareinsights.com 'sha256-RKMhCLDgTYD4/HYfFHKXddSqp4T+xAfDlTF0H0usmRc=' 'sha256-YKCI7TEVF8Jc7uPKAQygTs29yN4Wr+08KdjLSsshMmE='",
 	"style-src 'self' 'unsafe-inline'",
 	"font-src 'self' data:",
 	"img-src 'self' data: blob: https:",
-	"connect-src 'self' https://challenges.cloudflare.com https://api.iconify.design https://api.unisvg.com https://api.simplesvg.com",
+	"connect-src 'self' https://challenges.cloudflare.com https://cloudflareinsights.com https://api.iconify.design https://api.unisvg.com https://api.simplesvg.com",
 	"frame-src https://challenges.cloudflare.com",
 	"object-src 'none'",
 	"base-uri 'none'",
@@ -78,7 +78,8 @@ export default {
 			() => oauthService.clearNoBindOathUser({ env }),
 			() => analysisService.refreshEchartsCache({ env }),
 			() => rateLimitService.cleanup({ env }),
-			() => emailService.cleanupRetention({ env })
+			() => emailService.cleanupRetention({ env }),
+			() => emailService.autoClean({ env })
 		]));
 	}
 };

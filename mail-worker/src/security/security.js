@@ -20,8 +20,11 @@ const publicRoutes = [
 	['GET', /^\/init\/[^/]+$/],
 	['POST', '/public/genToken'],
 	['GET', /^\/telegram\/getEmail\/[^/]+$/],
+	['GET', '/oauth/state'],
 	['GET', '/oauth/linuxDo/state'],
 	['POST', '/oauth/linuxDo/login'],
+	['POST', '/oauth/github/login'],
+	['POST', '/oauth/google/login'],
 	['PUT', '/oauth/bindUser'],
 	['GET', /^\/oss(?:\/.*)?$/]
 ];

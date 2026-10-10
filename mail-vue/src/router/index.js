@@ -104,16 +104,16 @@ router.beforeEach((to, from, next) => {
 
     const authenticated = isAuthenticated()
 
-    if (!authenticated && to.name !== 'login') {
+    if (!authenticated && !to.path.startsWith('/login')) {
         return next({name: 'login'})
     }
 
-    if (!authenticated && to.name === 'login') {
+    if (!authenticated && to.path.startsWith('/login')) {
         loadBackground(next)
         return
     }
 
-    if (authenticated && to.name === 'login') {
+    if (authenticated && to.path.startsWith('/login')) {
         return next(from.path || '/')
     }
 

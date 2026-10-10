@@ -14,6 +14,7 @@ import aiService from '../service/ai-service';
 import pushSubscriptionService from '../service/push-subscription-service';
 import pushWebhookService from '../service/push-webhook-service';
 import verifyUtils from '../utils/verify-utils';
+import webhookService from '../service/webhook-service';
 
 const MAX_RAW_BYTES = 35 * 1024 * 1024;
 const MAX_ADDRESS_ITEMS = 100;
@@ -63,6 +64,7 @@ export async function email(message, env, ctx) {
 		const setting = await settingService.query(context);
 		const {
 			receive, tgChatId, tgBotStatus, forwardStatus, forwardEmail,
+			webhookStatus, webhookUrl, webhookRetry, webhookSecret,
 			ruleEmail, ruleType, r2Domain, noRecipient,
 			blackSubject, blackContent, blackFrom, aiCode, aiCodeFilter
 		} = setting;
@@ -103,7 +105,12 @@ export async function email(message, env, ctx) {
 			return;
 		}
 
-		const accountRow = await accountService.selectByEmailIncludeDel(context, recipient);
+		let accountRow = await accountService.selectByEmailIncludeDel(context, recipient);
+		// Plus Address：name+tag@domain 精确匹配不到时投递给主地址 name@domain
+		if (!accountRow) {
+			const baseEmail = emailUtils.getBaseEmail(recipient);
+			if (baseEmail && baseEmail !== recipient) accountRow = await accountService.selectByEmailIncludeDel(context, baseEmail);
+		}
 		let userRow = null;
 		if (accountRow) {
 			if (accountRow.isDel !== isDel.NORMAL) {
@@ -232,6 +239,9 @@ export async function email(message, env, ctx) {
 				]);
 				if (subscriptions.length) await pushWebhookService.pushNewMail(context, subscriptions, emailRow, unreadCount);
 			})());
+		}
+		if (webhookStatus === settingConst.webhookStatus.OPEN && webhookUrl) {
+			backgroundTasks.push(webhookService.sendEmail(context, emailRow, webhookUrl, webhookRetry, webhookSecret));
 		}
 		if (backgroundTasks.length) ctx.waitUntil(Promise.allSettled(backgroundTasks));
 	} catch (error) {

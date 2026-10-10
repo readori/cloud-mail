@@ -29,7 +29,7 @@ import {useSettingStore} from "@/store/setting.js";
 import emailScroll from "@/components/email-scroll/index.vue"
 import {emailList, emailDelete, emailLatest, emailRead} from "@/request/email.js";
 import {starAdd, starCancel} from "@/request/star.js";
-import {defineOptions, h, onMounted, reactive, ref, watch} from "vue";
+import {defineOptions, h, onMounted, onUnmounted, reactive, ref, watch} from "vue";
 import {sleep} from "@/utils/time-utils.js";
 import router from "@/router/index.js";
 import {Icon} from "@iconify/vue";
@@ -64,7 +64,7 @@ function changeTimeSort() {
 }
 
 function jumpContent(email) {
-  emailStore.contentData.email = email
+  emailStore.contentData.email = emailStore.toContentEmail(email)
   emailStore.contentData.delType = 'logic'
   emailStore.contentData.showUnread = true
   emailStore.contentData.showStar = true
@@ -74,13 +74,19 @@ function jumpContent(email) {
 
 const existIds = new Set();
 
+// 组件卸载(如退出登录)后停止轮询，避免旧循环访问已销毁的 scroll 引用
+let pollingStopped = false
+onUnmounted(() => {
+  pollingStopped = true
+})
+
 async function latest() {
-  while (true) {
+  while (!pollingStopped) {
 
     let autoRefresh = settingStore.settings.autoRefresh;
     await sleep(autoRefresh > 1 ? autoRefresh * 1000 : 3000);
 
-    if (route.name !== 'email') {
+    if (pollingStopped || !scroll.value || route.name !== 'email') {
       continue;
     }
 
@@ -101,6 +107,7 @@ async function latest() {
         //确保请求回来后，账号没有切换，时间排序没有改变，全部邮件类型没变
         if (accountId === accountStore.currentAccountId && params.timeSort === curTimeSort && allReceive === accountStore.currentAccount.allReceive) {
           if (list.length > 0) {
+            emailStore.applyFullList(list)
 
             for (let email of list) {
 
@@ -110,7 +117,7 @@ async function latest() {
               if (!existIds.has(email.emailId)) {
 
                 existIds.add(email.emailId)
-                scroll.value.addItem(email)
+                scroll.value?.addItem(email)
 
                 await sleep(50)
               }
@@ -141,9 +148,13 @@ function cancelStar(email) {
 function getEmailList(emailId, size) {
   const accountId =  accountStore.currentAccountId;
   const allReceive = accountStore.currentAccount.allReceive;
-  return emailList(accountId, allReceive, emailId, params.timeSort, size, 0).then(data => {
-    data.latestEmail.reqAccountId = accountId;
-    data.latestEmail.allReceive = allReceive;
+  return emailStore.fetchList(full =>
+    emailList(accountId, allReceive, emailId, params.timeSort, size, 0, full)
+  ).then(data => {
+    if (data?.latestEmail) {
+      data.latestEmail.reqAccountId = accountId;
+      data.latestEmail.allReceive = allReceive;
+    }
     return data;
   })
 }

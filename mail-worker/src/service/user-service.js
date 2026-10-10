@@ -90,7 +90,7 @@ const userService = {
 	selectByEmail(c, email) {
 		return orm(c).select().from(user).where(
 			and(
-				eq(user.email, email),
+				sql`${user.email} COLLATE NOCASE = ${email}`,
 				eq(user.isDel, isDel.NORMAL)))
 			.get();
 	},
@@ -152,7 +152,7 @@ const userService = {
 
 
 		if (email) {
-			conditions.push(sql`${user.email} COLLATE NOCASE LIKE ${'%'+ email + '%'}`);
+			conditions.push(sql`${user.email} COLLATE NOCASE LIKE ${email + '%'}`);
 		}
 
 
@@ -180,7 +180,8 @@ const userService = {
 			username: oauth.username,
 			trustLevel: oauth.trustLevel,
 			avatar: oauth.avatar,
-			name: oauth.name
+			name: oauth.name,
+			platform: oauth.platform
 		}).from(user).leftJoin(oauth, eq(oauth.userId, user.userId))
 			.where(and(...conditions));
 
@@ -346,7 +347,8 @@ const userService = {
 
 	async add(c, params = {}) {
 		const email = normalizeEmail(params.email);
-		const type = toId(params.type, 'type');
+		// 未指定身份时使用默认身份(开放 API 创建用户)
+		const useDefaultRole = params.type === undefined || params.type === null || params.type === '';
 		const password = params.password;
 		if (typeof password !== 'string' || password.length < 10) throw new BizError(t('pwdMinLength'), 400);
 		if (password.length > 128) throw new BizError(t('pwdLengthLimit'), 400);
@@ -360,7 +362,7 @@ const userService = {
 
 		const [accountRow, role] = await Promise.all([
 			accountService.selectByEmailIncludeDel(c, email),
-			roleService.selectById(c, type)
+			useDefaultRole ? roleService.selectDefaultRole(c) : roleService.selectById(c, toId(params.type, 'type'))
 		]);
 		if (accountRow?.isDel === isDel.DELETE) throw new BizError(t('isDelUser'));
 		if (accountRow) throw new BizError(t('isRegAccount'), 409);
@@ -368,7 +370,7 @@ const userService = {
 		if (!roleService.hasAvailDomainPerm(role.availDomain, email)) throw new BizError(t('noDomainPermAdd'), 403);
 
 		const { salt, hash } = await saltHashUtils.hashPassword(password, saltHashUtils.iterationsFromEnv(c.env));
-		const userId = await this.insert(c, { email, password: hash, salt, type });
+		const userId = await this.insert(c, { email, password: hash, salt, type: role.roleId });
 		try {
 			await accountService.insert(c, { userId, email, name: emailUtils.getName(email) });
 		} catch (error) {
@@ -379,6 +381,10 @@ const userService = {
 	},
 
 	async resetDaySendCount(c) {
+		// 仅 UTC 0 点执行，便于配合每小时 cron
+		if (new Date().getUTCHours() !== 0) {
+			return;
+		}
 		const roleList = await roleService.selectByIdsAndSendType(c, 'email:send', roleConst.sendType.DAY);
 		const roleIds = roleList.map(action => action.roleId);
 		if (roleIds.length === 0) return;

@@ -1,10 +1,14 @@
 const encoder = new TextEncoder();
 
 const PASSWORD_SCHEME = 'pbkdf2-sha256';
-const DEFAULT_PBKDF2_ITERATIONS = 150_000;
+// Cloudflare Workers 的 WebCrypto 不支持超过 100000 次的 PBKDF2 迭代
+// (NotSupportedError: iteration counts above 100000 are not supported)，
+// 超出会导致新增用户/注册/改密直接 500。因此默认值与上限都固定为 100000。
+const WORKERS_MAX_PBKDF2_ITERATIONS = 100_000;
+const DEFAULT_PBKDF2_ITERATIONS = WORKERS_MAX_PBKDF2_ITERATIONS;
 const LEGACY_MIN_PBKDF2_ITERATIONS = 10_000;
 const POLICY_MIN_PBKDF2_ITERATIONS = 100_000;
-const MAX_PBKDF2_ITERATIONS = 2_000_000;
+const MAX_PBKDF2_ITERATIONS = WORKERS_MAX_PBKDF2_ITERATIONS;
 const KEY_LENGTH_BITS = 256;
 
 function bytesToBase64(bytes) {

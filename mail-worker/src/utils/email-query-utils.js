@@ -34,6 +34,11 @@ function assertAllAccountsScope(accountId, allReceive) {
 }
 
 
+// full=1 返回完整字段(含正文与附件)，full=0 只返回列表摘要。默认 1 兼容旧客户端。
+export function normalizeFullFlag(value) {
+	return integer(value, { name: 'full', defaultValue: 1, min: 0, max: 1 }) === 1;
+}
+
 export function normalizeEmailCursor(value, { timeSort = 0, name = 'emailId' } = {}) {
 	const sort = integer(timeSort, { name: 'timeSort', defaultValue: 0, min: 0, max: 1 });
 	const raw = integer(value, {
@@ -70,7 +75,8 @@ export function normalizeEmailListQuery(params = {}) {
 		// Existing Web and iOS clients historically sent zero for the first
 		// descending page. Normalize that sentinel to the newest possible cursor.
 		emailId: !timeSort && rawEmailId === 0 ? Number.MAX_SAFE_INTEGER : rawEmailId,
-		allReceive
+		allReceive,
+		full: normalizeFullFlag(params.full)
 	};
 }
 

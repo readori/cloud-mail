@@ -1,7 +1,10 @@
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const PREFIX = 'enc:v1:';
-const SECRET_FIELDS = Object.freeze(['secretKey', 'tgBotToken', 'resendTokens', 's3AccessKey', 's3SecretKey']);
+const SECRET_FIELDS = Object.freeze([
+	'secretKey', 'tgBotToken', 'resendTokens', 's3AccessKey', 's3SecretKey',
+	'linuxdoClientSecret', 'githubClientSecret', 'googleClientSecret', 'webhookSecret'
+]);
 
 function b64url(bytes) {
 	let binary = '';

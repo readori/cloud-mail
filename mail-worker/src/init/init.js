@@ -48,6 +48,7 @@ const dbInit = {
 		await this.v3_6DB(c);
 		await this.v3_7DB(c);
 		await this.v3_8DB(c);
+		await this.v3_9DB(c);
 		// Encrypt legacy integration secrets and re-wrap values encrypted with the previous key.
 		await settingService.migrateSecrets(c);
 		await settingService.refresh(c);
@@ -65,6 +66,34 @@ const dbInit = {
 		return diff === 0;
 	},
 
+
+	async v3_9DB(c) {
+		// 上游 cloud-mail v3.2/v3.3：OAuth(Linux DO/GitHub/Google)后台配置、自动清理、Webhook 字段及列表索引
+		await settingService.ensureLatestColumns(c);
+		const statements = [
+			`CREATE INDEX IF NOT EXISTS idx_email_create_time ON email(create_time)`,
+			`CREATE INDEX IF NOT EXISTS idx_email_list_user ON email(user_id, type, is_del, email_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_email_list_account ON email(user_id, account_id, type, is_del, email_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_star_email_user ON star(email_id, user_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_email_name_nocase ON email(name COLLATE NOCASE)`,
+			`CREATE INDEX IF NOT EXISTS idx_email_subject_nocase ON email(subject COLLATE NOCASE)`,
+			`CREATE INDEX IF NOT EXISTS idx_user_email_nocase ON user(email COLLATE NOCASE)`,
+			`CREATE INDEX IF NOT EXISTS idx_email_to_email_nocase ON email(to_email COLLATE NOCASE)`,
+			`CREATE INDEX IF NOT EXISTS idx_email_send_email_nocase ON email(send_email COLLATE NOCASE)`,
+			`CREATE INDEX IF NOT EXISTS idx_email_noone_id ON email(email_id) WHERE status = 7`,
+			`CREATE INDEX IF NOT EXISTS idx_email_type_id ON email(type, email_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_email_saving_account ON email(account_id) WHERE status = 6`,
+			`CREATE INDEX IF NOT EXISTS idx_email_type_name ON email(type, name)`,
+			`CREATE INDEX IF NOT EXISTS idx_email_type_create_time ON email(type, create_time)`,
+			`CREATE INDEX IF NOT EXISTS idx_user_create_time ON user(create_time)`,
+			`CREATE INDEX IF NOT EXISTS idx_attachments_email_type ON attachments(email_id, type)`,
+			`CREATE INDEX IF NOT EXISTS idx_role_perm_role ON role_perm(role_id)`
+		];
+		for (const statement of statements) {
+			try { await c.env.db.prepare(statement).run(); }
+			catch (error) { console.warn(`跳过索引：${error.message}`); }
+		}
+	},
 
 	async v3_8DB(c) {
 		// Atomic security rate-limit buckets. D1 provides a single-statement increment so
@@ -240,6 +269,7 @@ const dbInit = {
 			console.warn(`跳过字段：${e.message}`);
 		}
 	},
+
 
 	async v3_0DB(c) {
 		try {
