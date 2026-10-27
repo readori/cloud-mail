@@ -1,4 +1,5 @@
 import settingService from '../service/setting-service';
+import loginLogService from '../service/login-log-service';
 import emailUtils from '../utils/email-utils';
 import { emailConst } from '../const/entity-const';
 import rateLimitService from '../service/rate-limit-service';
@@ -49,6 +50,7 @@ const dbInit = {
 		await this.v3_7DB(c);
 		await this.v3_8DB(c);
 		await this.v3_9DB(c);
+		await this.v4_0DB(c);
 		// Encrypt legacy integration secrets and re-wrap values encrypted with the previous key.
 		await settingService.migrateSecrets(c);
 		await settingService.refresh(c);
@@ -67,9 +69,22 @@ const dbInit = {
 	},
 
 
+	async v4_0DB(c) {
+		// 上游 cloud-mail v3.4：信封发件人(代发地址)
+		try {
+			await c.env.db.prepare(`ALTER TABLE email ADD COLUMN sender_email TEXT NOT NULL DEFAULT '';`).run();
+		} catch (e) {
+			console.warn(`跳过字段：${e.message}`);
+		}
+	},
+
 	async v3_9DB(c) {
 		// 上游 cloud-mail v3.2/v3.3：OAuth(Linux DO/GitHub/Google)后台配置、自动清理、Webhook 字段及列表索引
 		await settingService.ensureLatestColumns(c);
+		// 用户登录记录(每次登录的 IP/地区/设备)，供管理员查看
+		await loginLogService.ensureTable(c);
+		// 「登录日志」权限：超级管理员默认拥有，可在「权限」中分配给其他身份
+		await loginLogService.ensurePerm(c);
 		const statements = [
 			`CREATE INDEX IF NOT EXISTS idx_email_create_time ON email(create_time)`,
 			`CREATE INDEX IF NOT EXISTS idx_email_list_user ON email(user_id, type, is_del, email_id)`,

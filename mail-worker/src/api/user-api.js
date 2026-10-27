@@ -3,6 +3,17 @@ import userService from '../service/user-service';
 import result from '../model/result';
 import userContext from '../security/user-context';
 import accountService from '../service/account-service';
+import loginLogService from '../service/login-log-service';
+
+app.get('/user/loginLog', async (c) => {
+	const data = await loginLogService.list(c, c.req.query());
+	return c.json(result.ok(data));
+});
+
+app.get('/loginLog/list', async (c) => {
+	const data = await loginLogService.listAll(c, c.req.query());
+	return c.json(result.ok(data));
+});
 
 app.delete('/user/delete', async (c) => {
 	await userService.physicsDelete(c, c.req.query());

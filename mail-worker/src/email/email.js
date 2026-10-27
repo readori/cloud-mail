@@ -1,4 +1,5 @@
 import PostalMime from 'postal-mime';
+import { ensureEmailSenderColumn } from '../init/schema-heal';
 import emailService from '../service/email-service';
 import accountService from '../service/account-service';
 import settingService from '../service/setting-service';
@@ -61,6 +62,7 @@ async function readRawMessage(raw) {
 export async function email(message, env, ctx) {
 	const context = { env };
 	try {
+		await ensureEmailSenderColumn(env);
 		const setting = await settingService.query(context);
 		const {
 			receive, tgChatId, tgBotStatus, forwardStatus, forwardEmail,
@@ -181,6 +183,8 @@ export async function email(message, env, ctx) {
 			toName,
 			sendEmail: sender,
 			name: parsed.from.name || emailUtils.getName(sender),
+			// 上游 v3.4：信封发件人(SMTP MAIL FROM)，与信头 From 不同时前端显示代发地址
+			senderEmail: String(message.from || '').slice(0, 320),
 			subject: parsed.subject,
 			code,
 			content: parsed.html,

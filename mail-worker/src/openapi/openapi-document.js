@@ -863,6 +863,37 @@ export default {
         }
       }
     },
+    "/loginLog/list": {
+      "get": {
+        "operationId": "user_get_loginLog_list",
+        "summary": "GET /loginLog/list",
+        "responses": {
+          "200": {
+            "description": "Successful CloudMail response"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required or expired"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "webSession": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/logout": {
       "delete": {
         "operationId": "login_delete_logout",
@@ -2133,6 +2164,37 @@ export default {
       "get": {
         "operationId": "user_get_user_list",
         "summary": "GET /user/list",
+        "responses": {
+          "200": {
+            "description": "Successful CloudMail response"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required or expired"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "webSession": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/user/loginLog": {
+      "get": {
+        "operationId": "user_get_user_loginLog",
+        "summary": "GET /user/loginLog",
         "responses": {
           "200": {
             "description": "Successful CloudMail response"

@@ -90,9 +90,19 @@
             </div>
           </div>
           <div>
-            <el-button type="primary" @click="sendEmail" v-if="form.sendType === 'reply'">{{ $t('reply') }}</el-button>
-            <el-button type="primary" @click="sendEmail" v-else-if="form.sendType === 'forward'">{{ $t('forward') }}</el-button>
-            <el-button type="primary" @click="sendEmail" v-else>{{ $t('send') }}</el-button>
+            <el-dropdown split-button type="primary" trigger="click" @click="sendEmail" @command="selectSendMode">
+              {{ sendButtonLabel }}
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="together">
+                    {{ $t(form.sendType === 'forward' ? 'forward' : 'send') }}
+                  </el-dropdown-item>
+                  <el-dropdown-item command="divide">
+                    {{ separateSendLabel }}
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </div>
         </div>
       </div>
@@ -187,6 +197,7 @@ const form = reactive({
   subject: '',
   content: '',
   sendType: '',
+  manyType: 'together',
   text: '',
   emailId: 0,
   attachments: [],
@@ -196,6 +207,17 @@ const form = reactive({
 const selectRecipientList = ref([])
 
 const contacts = computed(() => writerStore.sendRecipientRecord.map(item => ({email: item})))
+const separateSendLabel = computed(() => t(form.sendType === 'forward' ? 'separateForward' : 'separateSend'))
+const sendButtonLabel = computed(() => {
+  if (form.manyType === 'divide') return separateSendLabel.value
+  if (form.sendType === 'reply') return t('reply')
+  if (form.sendType === 'forward') return t('forward')
+  return t('send')
+})
+
+function selectSendMode(mode) {
+  form.manyType = mode
+}
 
 function openContacts() {
   showContacts.value = true
@@ -351,22 +373,11 @@ async function sendEmail() {
     return
   }
 
-  if (!form.content) {
-    form.content = editor.value.getContent();
-  }
+  form.content = editor.value.getContent();
 
   if (!form.content) {
     ElMessage({
       message: t('emptyContentMsg'),
-      type: 'error',
-      plain: true,
-    })
-    return
-  }
-
-  if (form.manyType === 'divide' && form.attachments.length > 0) {
-    ElMessage({
-      message: t('noSeparateSendMsg'),
       type: 'error',
       plain: true,
     })
@@ -395,11 +406,27 @@ async function sendEmail() {
 
   emailSend(form, (e) => {
     percent.value = Math.round((e.loaded * 98) / e.total)
-  }).then(emailList => {
+  }).then(result => {
+    const emailList = Array.isArray(result) ? result : result.emails
     const email = emailList[0]
     emailList.forEach(item => {
       emailStore.sendScroll?.addItem(item)
     })
+
+    userStore.refreshUserInfo();
+    addRecipientRecord();
+
+    if (result.failedRecipients?.length) {
+      form.receiveEmail = result.failedRecipients
+      show.value = true
+      ElNotification({
+        title: t('partialSendMsg', {count: emailList.length, failed: result.failedRecipients.length}),
+        type: 'warning',
+        message: result.error,
+        position: 'bottom-right'
+      })
+      return
+    }
 
     ElNotification({
       title: t('sendSuccessMsg'),
@@ -407,10 +434,6 @@ async function sendEmail() {
       message: h('span', {style: 'color: teal'}, email.subject),
       position: 'bottom-right'
     })
-
-    userStore.refreshUserInfo();
-
-    addRecipientRecord();
 
     if (form.draftId) {
       form.subject = ''
@@ -464,7 +487,7 @@ function resetForm() {
   form.bcc = []
   form.subject = ''
   form.content = ''
-  form.manyType = null
+  form.manyType = 'together'
   form.attachments = []
   form.sendType = ''
   form.emailId = 0
@@ -585,6 +608,7 @@ function openDraft(draft) {
     receiveEmail: Array.isArray(draft.receiveEmail) ? [...draft.receiveEmail] : [],
     cc: Array.isArray(draft.cc) ? [...draft.cc] : [],
     bcc: Array.isArray(draft.bcc) ? [...draft.bcc] : [],
+    manyType: draft.manyType || 'together',
   })
   showExtendedRecipients.value = form.cc.length > 0 || form.bcc.length > 0
   defValue.value = ''

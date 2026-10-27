@@ -108,6 +108,7 @@
                     </template>
                     <el-dropdown-item @click="openAccountList(props.row.userId)" >{{ $t('account') }}</el-dropdown-item>
                     <el-dropdown-item @click="openDetails(props.row)" >{{ $t('details') }}</el-dropdown-item>
+                    <el-dropdown-item v-if="canViewLoginLog" @click="openLoginLog(props.row)" >{{ $t('loginLog') }}</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -237,6 +238,42 @@
         />
       </div>
     </el-dialog>
+    <el-dialog class="account-dialog login-log-dialog" v-model="loginLogShow" :title="t('loginLog') + (loginLogParams.email ? ' · ' + loginLogParams.email : '')" @closed="resetLoginLog" >
+      <el-table :data="loginLogList" style="height: 480px" v-loading="loginLogLoading" element-loading-background="transparent" :empty-text="loginLogLoading ? '' : t('noLoginLog')">
+        <el-table-column :label="t('loginTime')" :width="150">
+          <template #default="props">{{ tzDayjs(props.row.createTime).format('YYYY-MM-DD HH:mm:ss') }}</template>
+        </el-table-column>
+        <el-table-column :label="t('loginIp')" min-width="150">
+          <template #default="props">
+            <div class="email-row">{{ props.row.ip || t('unknown') }}</div>
+            <div class="login-log-sub" v-if="props.row.country || props.row.city">{{ [props.row.country, props.row.city].filter(Boolean).join(' · ') }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column :label="t('loginDevice')" min-width="160">
+          <template #default="props">
+            <div class="email-row">{{ [props.row.device, props.row.os].filter(Boolean).join(' / ') || t('unknown') }}</div>
+            <div class="login-log-sub">{{ props.row.browser }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column :label="t('loginMethod')" :width="locale === 'en' ? 95 : 80">
+          <template #default="props">
+            <el-tag disable-transitions :type="props.row.method === 'oauth' ? 'success' : 'primary'">{{ props.row.method === 'oauth' ? t('loginByOauth') : t('loginByPassword') }}</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="account-pagination">
+        <el-pagination
+            :disabled="loginLogLoading"
+            background
+            layout="prev, pager, next"
+            :pager-count="5"
+            :page-size="loginLogParams.size"
+            :current-page="loginLogParams.num"
+            :total="loginLogParams.total"
+            @current-change="loginLogCurChange"
+        />
+      </div>
+    </el-dialog>
     <el-dialog class="account-dialog" v-model="detailsShow" :title="t('userDetails')"  >
       <div class="details">
         <div v-if="userDetails.platform || userDetails.username" class="oauth-details">
@@ -362,6 +399,14 @@
               </div>
             </template>
           </el-dropdown-item>
+          <el-dropdown-item v-if="canViewLoginLog" @click="openLoginLog(rightClickUser)" >
+            <template #default>
+              <div class="right-dropdown-item" >
+                <Icon icon="mdi:map-marker-path" width="20" height="20" />
+                <span>{{ t('loginLog') }}</span>
+              </div>
+            </template>
+          </el-dropdown-item>
           <el-dropdown-item v-if="rightClickUser.type !== 0" @click="delOneUser(rightClickUser)" >
             <template #default>
               <div class="right-dropdown-item" >
@@ -388,7 +433,8 @@ import {
   userRestSendCount,
   userRestore,
   userDeleteAccount,
-  userAllAccount
+  userAllAccount,
+  userLoginLog
 } from '@/request/user.js'
 import {roleSelectUseCompat} from "@/request/role.js";
 import {Icon} from "@iconify/vue";
@@ -398,6 +444,7 @@ import {useSettingStore} from "@/store/setting.js";
 import {isEmail} from "@/utils/verify-utils.js";
 import {useRoleStore} from "@/store/role.js";
 import {useUserStore} from "@/store/user.js";
+import {hasPerm} from "@/perm/perm.js";
 import {useI18n} from 'vue-i18n';
 
 defineOptions({
@@ -622,6 +669,43 @@ function openAccountList(userId) {
   accountParams.userId = userId
   getAccountList(true)
   accountShow.value = true
+}
+
+// 登录记录需要「登录日志」权限(超级管理员默认拥有，后端同样校验)
+const canViewLoginLog = computed(() => hasPerm('login-log:query'))
+const loginLogShow = ref(false)
+const loginLogLoading = ref(false)
+const loginLogList = reactive([])
+const loginLogParams = reactive({userId: 0, email: '', num: 1, size: 20, total: 0})
+
+function openLoginLog(user) {
+  loginLogParams.userId = user.userId
+  loginLogParams.email = user.email || ''
+  loginLogParams.num = 1
+  loginLogShow.value = true
+  getLoginLog()
+}
+
+function getLoginLog() {
+  loginLogLoading.value = true
+  userLoginLog(loginLogParams.userId, loginLogParams.num, loginLogParams.size).then(({list, total}) => {
+    loginLogList.length = 0
+    loginLogList.push(...list)
+    loginLogParams.total = total
+  }).finally(() => {
+    loginLogLoading.value = false
+  })
+}
+
+function loginLogCurChange(num) {
+  loginLogParams.num = num
+  getLoginLog()
+}
+
+function resetLoginLog() {
+  loginLogList.length = 0
+  loginLogParams.total = 0
+  loginLogParams.num = 1
 }
 
 function openDetails(user) {
@@ -1199,6 +1283,11 @@ function adjustWidth() {
 
 :deep(.oauth-platform-icon) {
   flex-shrink: 0;
+}
+
+.login-log-sub {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 
 .account-pagination {

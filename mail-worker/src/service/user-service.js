@@ -18,6 +18,7 @@ import { t } from '../i18n/i18n';
 import reqUtils from '../utils/req-utils';
 import {oauth} from "../entity/oauth";
 import oauthService from './oauth-service';
+import loginLogService from './login-log-service';
 import { normalizeEmail, toId, toIdList, toInteger, toPageNumber, toPageSize } from '../utils/input-utils';
 
 function isAdminEmail(c, email) {
@@ -128,6 +129,7 @@ const userService = {
 		for (const userId of userIds) await assertMutableUser(c, userId);
 		await accountService.physicsDeleteByUserIds(c, userIds);
 		await oauthService.deleteByUserIds(c, userIds);
+		await loginLogService.deleteByUserIds(c, userIds);
 		await orm(c).delete(user).where(inArray(user.userId, userIds)).run();
 		await Promise.all(userIds.map(userId => c.env.kv.delete(KvConst.AUTH_INFO + userId)));
 	},

@@ -6,12 +6,14 @@ import user from '../entity/user';
 import role from '../entity/role';
 import { permConst } from '../const/entity-const';
 import { tForRequest } from '../i18n/i18n'
+import loginLogService from './login-log-service';
 
 const permService = {
 	async tree(c) {
 		// Build the permission hierarchy recursively instead of assuming that the
 		// database only ever has two levels. This keeps Web/iOS role editors stable
 		// when a deployment adds third-level groups or migrates older permission rows.
+		await loginLogService.ensurePerm(c);
 		const rows = await orm(c).select().from(perm).orderBy(asc(perm.sort), asc(perm.permId)).all();
 		const nodes = new Map();
 

@@ -48,3 +48,13 @@ export function userAllAccount(userId, num, size) {
 export function userDeleteAccount(accountId) {
     return http.delete('/user/deleteAccount', {params:{accountId}})
 }
+
+export function userLoginLog(userId, num, size) {
+    return http.get('/user/loginLog', {
+        params: {
+            userId,
+            num: normalizePageNumber(num),
+            size: normalizePageSize(size, 50, 20),
+        }
+    })
+}

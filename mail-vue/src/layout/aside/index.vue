@@ -1,10 +1,14 @@
 <template>
   <el-scrollbar class="scroll">
     <div>
-      <div class="title" >
-        <Icon icon="mdi:email-outline" width="24" height="24" />
+      <div class="title" :class="{ 'title-display': titleUsesDisplayFont }">
+        <img class="logo" :src="logoUrl" alt="" />
         <div>{{settingStore.settings.title}}</div>
       </div>
+      <button v-if="currentWorkspace === 'mail'" v-perm="'email:send'" class="compose-bar" type="button" @click="openCompose">
+        <Icon icon="material-symbols:edit-outline-sharp" width="22" height="22" />
+        <span>{{ $t('compose') }}</span>
+      </button>
       <div v-if="adminAvailable" class="workspace-switch" role="group" :aria-label="$t('workspaceSwitcher')">
         <button
             type="button"
@@ -70,6 +74,11 @@
             <Icon icon="si:user-alt-2-line" width="20" height="20" />
             <span class="menu-name" style="margin-left: 16px">{{$t('allUsers')}}</span>
           </el-menu-item>
+          <el-menu-item @click="router.push({name: 'login-log'})" index="login-log" v-perm="'login-log:query'"
+                        :class="route.meta.name === 'login-log' ? 'choose-item' : ''">
+            <Icon icon="mdi:map-marker-path" width="22" height="22" />
+            <span class="menu-name" style="margin-left: 15px">{{$t('loginLog')}}</span>
+          </el-menu-item>
           <el-menu-item @click="router.push({name: 'all-email'})" index="all-email" v-perm="'all-email:query'"
                         :class="route.meta.name === 'all-email' ? 'choose-item' : ''">
             <Icon icon="fluent:mail-list-28-regular" width="22" height="22" />
@@ -98,16 +107,24 @@
 
 <script setup>
 import router from "@/router/index.js";
+import {computed} from "vue";
 import { useRoute } from "vue-router";
 import {Icon} from "@iconify/vue";
 import {useSettingStore} from "@/store/setting.js";
-import {computed} from "vue";
 import {hasPerm} from "@/perm/perm.js";
+import {useUiStore} from "@/store/ui.js";
 
 const settingStore = useSettingStore();
+const uiStore = useUiStore();
 const route = useRoute();
+const logoUrl = `${import.meta.env.BASE_URL}mail.png`
+const titleUsesDisplayFont = computed(() => !/\p{Script=Han}/u.test(settingStore.settings.title || ''))
 
-const adminPermissions = ['analysis:query', 'user:query', 'all-email:query', 'role:query', 'reg-key:query', 'setting:query'];
+function openCompose() {
+  uiStore.writerRef.open()
+}
+
+const adminPermissions = ['analysis:query', 'user:query', 'all-email:query', 'role:query', 'reg-key:query', 'setting:query', 'login-log:query'];
 const adminAvailable = computed(() => adminPermissions.some(perm => hasPerm(perm)));
 const currentWorkspace = computed(() => route.meta.workspace === 'admin' ? 'admin' : 'mail');
 
@@ -123,6 +140,7 @@ function openAdminWorkspace() {
     ['role:query', 'role'],
     ['reg-key:query', 'reg-key'],
     ['setting:query', 'sys-setting'],
+    ['login-log:query', 'login-log'],
   ];
   const target = candidates.find(([perm, name]) => hasPerm(perm) && router.hasRoute(name));
   if (target) router.push({name: target[1]});
@@ -132,19 +150,26 @@ function openAdminWorkspace() {
 
 <style lang="scss" scoped>
 
+@font-face {
+  font-family: "BAHAMASB";
+  src: url("/fonts/BAHAMASB.woff") format("woff");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 .title {
-  margin: 15px 10px;
+  margin: 10px 6px;
   height: 45px;
   border-radius: 6px;
   display: flex;
   position: relative;
-  font-size: 16px;
-  font-weight: bold;
+  font-size: 18px;
+  font-weight: 600;
   align-items: center;
-  justify-content: center;
-  gap: 5px;
+  justify-content: flex-start;
+  gap: 10px;
   color: #ffffff;
-  background: linear-gradient(135deg, #1890ff, #3a80dd);
   transition: all 0.3s ease;
   max-width: 240px;
   padding: 0 10px;
@@ -152,12 +177,14 @@ function openAdminWorkspace() {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    max-width: calc(240px - 20px - 30px);
+    max-width: calc(240px - 20px - 32px - 5px);
   }
 
-  :deep(.el-icon) {
+  .logo {
+    width: 36px;
+    height: 36px;
     flex-shrink: 0;
-    font-size: 20px;
+    object-fit: contain;
   }
 
   .user-right-icon {
@@ -170,6 +197,39 @@ function openAdminWorkspace() {
 
 }
 
+.title.title-display {
+  font-family: "BAHAMASB", Inter, "Helvetica Neue", Helvetica, sans-serif;
+  font-size: 22px;
+  font-weight: normal;
+}
+
+.compose-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: calc(100% - 24px);
+  height: 42px;
+  margin-right: 12px;
+  margin-left: 12px;
+  margin-bottom: 15px;
+  border: 0;
+  border-radius: 8px;
+  background: #1890ff;
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    background: #1064c0;
+  }
+
+  @media (max-width: 767px) {
+    display: none;
+  }
+}
 
 .workspace-switch {
   display: grid;
@@ -207,13 +267,13 @@ function openAdminWorkspace() {
 }
 
 .manage-title {
-  margin-top: 10px;
+  margin-top: 12px;
   padding-left: 20px;
   color: #fff;
 }
 
 .el-menu-item {
-  margin: 3px 10px !important;
+  margin: 3px 12px !important;
   border-radius: 6px;
   height: 36px;
   padding: 10px !important;

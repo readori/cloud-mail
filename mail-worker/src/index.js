@@ -8,6 +8,7 @@ import oauthService from './service/oauth-service';
 import analysisService from './service/analysis-service';
 import rateLimitService from './service/rate-limit-service';
 import openAPIDocument from './openapi/openapi-document.js';
+import { ensureEmailSenderColumn } from './init/schema-heal';
 
 const STATIC_CSP = [
 	"default-src 'self'",
@@ -52,11 +53,16 @@ export default {
 		else if (requestPath === '/api') url.pathname = '/';
 		else if (requestPath.startsWith('/api/')) url.pathname = requestPath.slice('/api'.length);
 		if (isAPIRequest) {
+			await ensureEmailSenderColumn(env);
 			req = new Request(url.toString(), req);
 			const response = await app.fetch(req, env, ctx);
 			const headers = new Headers(response.headers);
 			headers.set('X-CloudMail-API-Version', '1');
 			return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+		}
+		// 上游 v3.4：移除对象存储访问域名后，附件统一经本站代理(KV/R2/S3)，兼容 /oss/ 前缀
+		if (url.pathname.startsWith('/oss/')) {
+			return r2Service.response({ env }, url.pathname.slice('/oss/'.length));
 		}
 		if (['/static/', '/attachments/'].some(prefix => url.pathname.startsWith(prefix))) {
 			return r2Service.response({ env }, url.pathname.substring(1));
@@ -67,6 +73,7 @@ export default {
 	email,
 
 	async scheduled(controller, env, ctx) {
+		await ensureEmailSenderColumn(env);
 		if (controller.cron === '*/30 * * * *') {
 			ctx.waitUntil(runScheduledTasks([() => analysisService.refreshEchartsCache({ env })]));
 			return;

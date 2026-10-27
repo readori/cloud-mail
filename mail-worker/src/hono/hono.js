@@ -56,6 +56,7 @@ app.use('*', async (c, next) => {
 		c.header('Access-Control-Allow-Origin', origin);
 		c.header('Vary', 'Origin');
 		c.header('Access-Control-Allow-Headers', ALLOW_HEADERS);
+		c.header('Access-Control-Expose-Headers', 'X-Request-Id, X-Refreshed-Token');
 		c.header('Access-Control-Allow-Methods', ALLOW_METHODS);
 		c.header('Access-Control-Allow-Credentials', 'true');
 		c.header('Access-Control-Max-Age', '86400');

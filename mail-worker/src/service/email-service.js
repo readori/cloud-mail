@@ -24,7 +24,7 @@ import account from "../entity/account";
 import { att } from '../entity/att';
 import { sanitizeEmailHtml } from '../utils/html-utils';
 import { normalizeEmailList, toId, toIdList, toInteger, toPageSize, toTrimmedString } from '../utils/input-utils';
-import { normalizeEmailCursor, normalizeEmailLatestQuery, normalizeEmailListQuery, normalizeFullFlag } from '../utils/email-query-utils';
+import { normalizeEmailCursor, normalizeEmailLatestQuery, normalizeEmailListQuery, normalizeEmailSearch, normalizeFullFlag } from '../utils/email-query-utils';
 
 const emailService = {
 
@@ -60,6 +60,7 @@ const emailService = {
 			eq(email.isDel, isDel.NORMAL),
 			eq(account.isDel, isDel.NORMAL)
 		];
+		const searchConditions = this.emailSearchConditions(normalizeEmailSearch(params));
 		const cursorCondition = timeSort ? gt(email.emailId, emailId) : lt(email.emailId, emailId);
 		const columns = full ? emailListColumns : emailBriefColumns;
 		const query = orm(c)
@@ -67,14 +68,14 @@ const emailService = {
 			.from(email)
 			.leftJoin(star, and(eq(star.emailId, email.emailId), eq(star.userId, uid)))
 			.innerJoin(account, eq(account.accountId, email.accountId))
-			.where(and(cursorCondition, ...baseConditions));
+			.where(and(cursorCondition, ...baseConditions, ...searchConditions));
 		query.orderBy(timeSort ? asc(email.emailId) : desc(email.emailId));
 
 		const [rawList, totalRow, latestEmail] = await Promise.all([
 			query.limit(size).all(),
 			orm(c).select({ total: count() }).from(email)
 				.innerJoin(account, eq(account.accountId, email.accountId))
-				.where(and(...baseConditions)).get(),
+				.where(and(...baseConditions, ...searchConditions)).get(),
 			orm(c).select({ emailId: email.emailId, accountId: email.accountId, userId: email.userId }).from(email)
 				.innerJoin(account, eq(account.accountId, email.accountId))
 				.where(and(...baseConditions))
@@ -91,6 +92,26 @@ const emailService = {
 			total: Number(totalRow?.total || 0),
 			latestEmail: latestEmail || { emailId: 0, accountId, userId: uid }
 		};
+	},
+
+	// 邮件搜索条件(上游 v3.4)。关键词中的 % _ 会被转义，按字面匹配。
+	emailSearchConditions({ text, searchType, startDate, endDate } = {}) {
+		const conditions = [];
+		if (text) {
+			const pattern = '%' + text.replace(/[\\%_]/g, char => '\\' + char) + '%';
+			const like = column => sql`${column} LIKE ${pattern} ESCAPE '\\'`;
+			const fields = {
+				subject: [email.subject],
+				content: [email.text, email.content],
+				sender: [email.name],
+				senderAddress: [email.sendEmail],
+				recipientAddress: [email.toEmail]
+			}[searchType] || [email.subject];
+			conditions.push(fields.length === 1 ? like(fields[0]) : or(...fields.map(like)));
+		}
+		if (startDate) conditions.push(gte(email.createTime, startDate));
+		if (endDate) conditions.push(lte(email.createTime, endDate));
+		return conditions;
 	},
 
 	toListText(item) {
@@ -187,8 +208,8 @@ const emailService = {
 		if (!name) name = emailUtils.getName(accountRow.email);
 
 		const { imageDataList: rawImages, html: convertedHtml } = await attService.toImageUrlHtml(c, sanitizeEmailHtml(rawContent), uid);
-		let imageDataList = rawImages;
-		let html = sanitizeEmailHtml(convertedHtml);
+		const imageDataList = rawImages;
+		const html = sanitizeEmailHtml(convertedHtml);
 		attService.validateOutgoingAttachments(attachments, imageDataList);
 
 		let replyRow = { messageId: null };
@@ -197,66 +218,130 @@ const emailService = {
 			if (!replyRow) throw new BizError(t('notExistEmailReply'), 404);
 		}
 
-		let sendResult = {};
-		if (!allInternal) {
-			const providerParams = {
-				name,
-				accountEmail: accountRow.email,
-				receiveEmail,
-				cc,
-				bcc,
-				subject,
-				text,
-				html,
-				attachments: [...imageDataList, ...attachments],
-				sendType,
-				messageId: replyRow.messageId
-			};
-			sendResult = useCloudflareEmail
-				? await this.sendByCloudflareEmail(c, providerParams)
-				: await this.sendByResend(resendToken, providerParams);
-		}
-		const { data, error } = sendResult;
-		if (error) throw new BizError(String(error.message || '邮件发送失败').slice(0, 2000));
+		// 上游 v3.4：分开发送(manyType=divide)——每位收件人单独收到一封邮件，互相看不到其他收件人。
+		const separate = params.manyType === 'divide';
+		if (separate && (cc.length > 0 || bcc.length > 0)) throw new BizError(t('separateNoCc'), 400);
 
-		imageDataList = imageDataList.map(item => ({ ...item, contentId: `<${String(item.contentId).replace(/^<|>$/g, '')}>` }));
-		html = sanitizeEmailHtml(this.imgReplace(html, imageDataList, r2Domain));
-		const emailData = {
-			sendEmail: accountRow.email,
+		const providerBase = {
 			name,
+			accountEmail: accountRow.email,
 			subject,
-			content: html,
 			text,
-			accountId,
-			status: allInternal || useCloudflareEmail ? emailConst.status.DELIVERED : emailConst.status.SENT,
-			type: emailConst.type.SEND,
-			userId: uid,
-			resendEmailId: data?.id || null,
-			recipient: JSON.stringify(receiveEmail.map(address => ({ address, name: '' }))),
-			cc: JSON.stringify(cc.map(address => ({ address, name: '' }))),
-			bcc: JSON.stringify(bcc.map(address => ({ address, name: '' })))
+			html,
+			attachments: [...imageDataList, ...attachments],
+			sendType,
+			messageId: replyRow.messageId
 		};
-		if (sendType === 'reply') {
-			emailData.inReplyTo = replyRow.messageId || '';
-			emailData.relation = replyRow.messageId || '';
+		const savedImages = imageDataList.map(item => ({ ...item, contentId: `<${String(item.contentId).replace(/^<|>$/g, '')}>` }));
+		const savedHtml = sanitizeEmailHtml(this.imgReplace(html, savedImages, r2Domain));
+
+		// 保存一条发件记录(含附件)，站内收件人直接投递，并累计发送次数。
+		const saveSent = async ({ to, cc: ccList = [], bcc: bccList = [], providerId = null }) => {
+			const recipients = [...to, ...ccList, ...bccList];
+			const emailData = {
+				sendEmail: accountRow.email,
+				name,
+				subject,
+				content: savedHtml,
+				text,
+				accountId,
+				status: allInternal || useCloudflareEmail ? emailConst.status.DELIVERED : emailConst.status.SENT,
+				type: emailConst.type.SEND,
+				userId: uid,
+				resendEmailId: providerId || null,
+				recipient: JSON.stringify(to.map(address => ({ address, name: '' }))),
+				cc: JSON.stringify(ccList.map(address => ({ address, name: '' }))),
+				bcc: JSON.stringify(bccList.map(address => ({ address, name: '' })))
+			};
+			if (sendType === 'reply') {
+				emailData.inReplyTo = replyRow.messageId || '';
+				emailData.relation = replyRow.messageId || '';
+			}
+
+			const emailResult = await orm(c).insert(email).values(emailData).returning().get();
+			await attService.saveArticleAtt(c, savedImages, uid, accountId, emailResult.emailId);
+			await attService.saveSendAtt(c, attachments, uid, accountId, emailResult.emailId);
+			const attList = await attService.selectByEmailIds(c, [emailResult.emailId]);
+			emailResult.attList = attList;
+
+			if (allInternal) await this.HandleOnSiteEmail(c, recipients, emailResult, attList);
+			if (!admin && Number(roleRow.sendCount) > 0 && roleRow.sendType !== 'internal') {
+				await userService.incrUserSendCount(c, recipients.length, uid);
+			}
+
+			const countKey = kvConst.SEND_DAY_COUNT + dayjs().format('YYYY-MM-DD');
+			const currentTotal = Number(await c.env.kv.get(countKey) || 0);
+			await c.env.kv.put(countKey, String(currentTotal + recipients.length), { expirationTtl: 60 * 60 * 24 });
+			return emailResult;
+		};
+
+		const providerError = error => String(error?.message || '邮件发送失败').slice(0, 2000);
+
+		if (!separate) {
+			let providerId = null;
+			if (!allInternal) {
+				const providerParams = { ...providerBase, receiveEmail, cc, bcc };
+				const { data, error } = useCloudflareEmail
+					? await this.sendByCloudflareEmail(c, providerParams)
+					: await this.sendByResend(resendToken, providerParams);
+				if (error) throw new BizError(providerError(error));
+				providerId = data?.id;
+			}
+			return [await saveSent({ to: receiveEmail, cc, bcc, providerId })];
 		}
 
-		const emailResult = await orm(c).insert(email).values(emailData).returning().get();
-		await attService.saveArticleAtt(c, imageDataList, uid, accountId, emailResult.emailId);
-		await attService.saveSendAtt(c, attachments, uid, accountId, emailResult.emailId);
-		const attList = await attService.selectByEmailIds(c, [emailResult.emailId]);
-		emailResult.attList = attList;
-
-		if (allInternal) await this.HandleOnSiteEmail(c, allRecipients, emailResult, attList);
-		if (!admin && Number(roleRow.sendCount) > 0 && roleRow.sendType !== 'internal') {
-			await userService.incrUserSendCount(c, allRecipients.length, uid);
+		const emails = [];
+		let sendError = '';
+		if (!allInternal && !useCloudflareEmail) {
+			// Resend 批量接口一次提交全部独立邮件，但不支持附件(含正文内嵌图片)。
+			if (providerBase.attachments.length > 0) throw new BizError(t('resendSeparateAttachments'), 400);
+			const { data, error } = await this.sendBatchByResend(resendToken, { ...providerBase, receiveEmail });
+			if (error) throw new BizError(providerError(error));
+			for (const [index, address] of receiveEmail.entries()) {
+				emails.push(await saveSent({ to: [address], providerId: data?.data?.[index]?.id }));
+			}
+		} else {
+			// 站内投递或 Cloudflare Email：逐人发送，失败即停止，已发送的部分保留并返回剩余收件人供重试。
+			for (const address of receiveEmail) {
+				try {
+					let providerId = null;
+					if (!allInternal) {
+						const { data } = await this.sendByCloudflareEmail(c, { ...providerBase, receiveEmail: [address] });
+						providerId = data?.id;
+					}
+					emails.push(await saveSent({ to: [address], providerId }));
+				} catch (error) {
+					sendError = providerError(error);
+					break;
+				}
+			}
 		}
 
-		const dateStr = dayjs().format('YYYY-MM-DD');
-		const countKey = kvConst.SEND_DAY_COUNT + dateStr;
-		const currentTotal = Number(await c.env.kv.get(countKey) || 0);
-		await c.env.kv.put(countKey, String(currentTotal + allRecipients.length), { expirationTtl: 60 * 60 * 24 });
-		return [emailResult];
+		if (emails.length === 0 && sendError) throw new BizError(sendError);
+		const sentRecipients = new Set(emails.flatMap(item => JSON.parse(item.recipient).map(recipient => recipient.address)));
+		return {
+			emails,
+			failedRecipients: receiveEmail.filter(address => !sentRecipients.has(address)),
+			error: sendError
+		};
+	},
+
+	// Resend 批量接口：为每位收件人构造一封独立邮件(严格校验，返回 ID 与提交顺序一致)。
+	async sendBatchByResend(resendToken, params) {
+		const resend = new Resend(resendToken);
+		const sendForm = {
+			from: `${params.name} <${params.accountEmail}>`,
+			subject: params.subject,
+			text: params.text,
+			html: params.html
+		};
+		if (params.sendType === 'reply' && params.messageId) {
+			sendForm.headers = {
+				'in-reply-to': params.messageId,
+				'references': params.messageId
+			};
+		}
+		return resend.batch.send(params.receiveEmail.map(address => ({ ...sendForm, to: [address] })), { batchValidation: 'strict' });
 	},
 
 	async sendByCloudflareEmail(c, params) {

@@ -2,7 +2,7 @@ import http from '@/axios/index.js';
 import {normalizePageSize} from '@/request/params.js'
 
 // full: 1 = 完整字段(正文/附件)，0 = 列表摘要
-export function emailList(accountId, allReceive, emailId, timeSort, size, type, full) {
+export function emailList(accountId, allReceive, emailId, timeSort, size, type, full, searchParams = {}) {
     const params = {
         accountId,
         allReceive,
@@ -12,6 +12,12 @@ export function emailList(accountId, allReceive, emailId, timeSort, size, type, 
     }
 
     if (full !== undefined) params.full = full
+
+    // 上游 v3.4 邮件搜索，空值不发送
+    const {type: searchType, text, startDate, endDate} = searchParams || {}
+    if (text) Object.assign(params, {searchType, text})
+    if (startDate) params.startDate = startDate
+    if (endDate) params.endDate = endDate
 
     // emailId=0 is an intentional first-page cursor. Descending requests omit
     // it so the Worker starts from the newest message; ascending requests keep

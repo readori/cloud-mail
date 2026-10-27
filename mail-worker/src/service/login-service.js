@@ -18,6 +18,7 @@ import { t } from '../i18n/i18n.js';
 import verifyRecordService from './verify-record-service';
 import settingService from './setting-service';
 import rateLimitService from './rate-limit-service';
+import loginLogService from './login-log-service';
 import { normalizeEmail, parseBooleanEnv, toTrimmedString } from '../utils/input-utils';
 
 function validatePassword(password, { allowLegacy = false } = {}) {
@@ -166,9 +167,9 @@ const loginService = {
 
 	assertUsableRegKey(row) {
 		if (Number(row.count) <= 0) throw new BizError(t('noRegKeyCount'));
-		const today = toUtc().tz('Asia/Shanghai').startOf('day');
-		const expireTime = toUtc(row.expireTime).tz('Asia/Shanghai').startOf('day');
-		if (!expireTime.isValid() || expireTime.isBefore(today)) throw new BizError(t('regKeyExpire'));
+		// 上游 v3.4：过期时间精确到秒，到点即失效
+		const expireTime = toUtc(row.expireTime);
+		if (!expireTime.isValid() || !expireTime.isAfter(toUtc())) throw new BizError(t('regKeyExpire'));
 	},
 
 	async login(c, params = {}, noVerifyPwd = false) {
@@ -226,6 +227,7 @@ const loginService = {
 		}
 
 		await userService.updateUserInfo(c, userRow.userId);
+		await loginLogService.record(c, userRow.userId, noVerifyPwd ? 'oauth' : 'password');
 		await c.env.kv.put(
 			KvConst.AUTH_INFO + userRow.userId,
 			JSON.stringify(authInfo),

@@ -7,7 +7,10 @@ import userService from '../service/user-service';
 import permService from '../service/perm-service';
 import { t } from '../i18n/i18n';
 import app from '../hono/hono';
-import { assertCookieCsrf, clearWebSession, getAuthToken } from './auth-session';
+import { assertCookieCsrf, clearWebSession, getAuthToken, refreshWebSessionCookie } from './auth-session';
+
+const TOKEN_RENEW_WINDOW_SECONDS = 7 * 24 * 60 * 60;
+const REFRESHED_TOKEN_HEADER = 'X-Refreshed-Token';
 
 const publicRoutes = [
 	['GET', '/health'],
@@ -51,6 +54,7 @@ const permissionPaths = {
 	'user:set-pwd': [['PUT', '/user/setPwd']],
 	'user:set-status': [['PUT', '/user/setStatus'], ['PUT', '/user/restore']],
 	'user:set-type': [['PUT', '/user/setType'], ['GET', '/role/selectUse']],
+	'login-log:query': [['GET', '/loginLog/list'], ['GET', '/user/loginLog']],
 	'user:delete': [['DELETE', '/user/delete'], ['DELETE', '/user/deleteAccount']],
 	'all-email:query': [['GET', '/allEmail/list'], ['GET', '/allEmail/latest']],
 	'all-email:delete': [['DELETE', '/allEmail/delete'], ['DELETE', '/allEmail/batchDelete']],
@@ -142,6 +146,15 @@ app.use('*', async (c, next) => {
 			JSON.stringify(authInfo),
 			{ expirationTtl: constant.TOKEN_EXPIRE }
 		);
+	}
+
+	// 滑动续期：JWT 剩余有效期不足 7 天时签发新 JWT(同一会话)，活跃用户不会因 30 天硬过期被登出。
+	// App 通过 X-Refreshed-Token 响应头获取，网页端直接更新会话 Cookie。
+	const nowSeconds = Math.floor(Date.now() / 1000);
+	if (Number.isFinite(tokenPayload.exp) && tokenPayload.exp - nowSeconds < TOKEN_RENEW_WINDOW_SECONDS) {
+		const renewed = await jwtUtils.generateToken(c, { userId, token: tokenPayload.token }, constant.TOKEN_EXPIRE);
+		if (auth.source === 'cookie') refreshWebSessionCookie(c, renewed);
+		else c.header(REFRESHED_TOKEN_HEADER, renewed);
 	}
 
 	c.set('user', authInfo.user);

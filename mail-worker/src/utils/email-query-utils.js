@@ -34,6 +34,28 @@ function assertAllAccountsScope(accountId, allReceive) {
 }
 
 
+const SEARCH_TYPES = new Set(['subject', 'content', 'sender', 'senderAddress', 'recipientAddress']);
+const SEARCH_DATE = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$/;
+
+function searchDate(value, name) {
+	if (value === undefined || value === null || value === '') return '';
+	const text = String(value).trim();
+	if (!SEARCH_DATE.test(text)) throw new BizError(`${name}格式错误`, 400);
+	return text;
+}
+
+// 上游 v3.4 邮件搜索：text + searchType(主题/正文/发件人/发件地址/收件地址) + 起止时间(UTC)。
+export function normalizeEmailSearch(params = {}) {
+	const text = typeof params.text === 'string' ? params.text.trim().slice(0, 200) : '';
+	const searchType = SEARCH_TYPES.has(params.searchType) ? params.searchType : 'subject';
+	return {
+		text,
+		searchType,
+		startDate: searchDate(params.startDate, 'startDate'),
+		endDate: searchDate(params.endDate, 'endDate')
+	};
+}
+
 // full=1 返回完整字段(含正文与附件)，full=0 只返回列表摘要。默认 1 兼容旧客户端。
 export function normalizeFullFlag(value) {
 	return integer(value, { name: 'full', defaultValue: 1, min: 0, max: 1 }) === 1;

@@ -3,7 +3,7 @@ import regKey from '../entity/reg-key';
 import { and, inArray, like, eq, desc, sql, or, gt } from 'drizzle-orm';
 import roleService from './role-service';
 import BizError from '../error/biz-error';
-import { formatDetailDate, toUtc } from '../utils/date-uitil';
+import { toUtc } from '../utils/date-uitil';
 import userService from './user-service';
 import { t } from '../i18n/i18n.js';
 import { toId, toIdList, toInteger, toTrimmedString } from '../utils/input-utils';
@@ -22,11 +22,11 @@ const regKeyService = {
 		if (existing) throw new BizError(t('isExistRegKye'));
 		if (!roleRow) throw new BizError(t('roleNotExist'));
 
-		const expireTime = formatDetailDate(expireInput);
-		if (!expireTime || !toUtc(expireTime).isValid()) throw new BizError('注册码过期时间格式错误', 400);
-		if (toUtc(expireTime).tz('Asia/Shanghai').endOf('day').isBefore(toUtc().tz('Asia/Shanghai'))) {
-			throw new BizError(t('regKeyExpire'), 400);
-		}
+		// 上游 v3.4：过期时间精确到秒(UTC)，到点即失效，不再按上海时区整天计算
+		const expireUtc = toUtc(expireInput);
+		if (!expireUtc.isValid()) throw new BizError('注册码过期时间格式错误', 400);
+		if (!expireUtc.isAfter(toUtc())) throw new BizError(t('regKeyExpire'), 400);
+		const expireTime = expireUtc.format('YYYY-MM-DD HH:mm:ss');
 
 		await orm(c).insert(regKey).values({ code, roleId, count, userId, expireTime }).run();
 	},
@@ -37,9 +37,9 @@ const regKeyService = {
 	},
 
 	async clearNotUse(c) {
-		const now = formatDetailDate(toUtc().tz('Asia/Shanghai').startOf('day'));
+		const now = toUtc().format('YYYY-MM-DD HH:mm:ss');
 		await orm(c).delete(regKey).where(
-			or(eq(regKey.count, 0), sql`datetime(${regKey.expireTime}, '+8 hours') < datetime(${now})`)
+			or(eq(regKey.count, 0), sql`datetime(${regKey.expireTime}) <= datetime(${now})`)
 		).run();
 	},
 
@@ -55,13 +55,13 @@ const regKeyService = {
 
 		const regKeyList = await query.orderBy(desc(regKey.regKeyId)).all();
 		const roleList = await roleService.roleSelectUse(c);
-		const today = toUtc().tz('Asia/Shanghai').startOf('day');
+		const now = toUtc();
 		const roleMap = new Map(roleList.map(row => [row.roleId, row.name]));
 
 		for (const row of regKeyList) {
 			row.roleName = roleMap.get(row.roleId) || '';
-			const expireTime = toUtc(row.expireTime).tz('Asia/Shanghai').startOf('day');
-			if (!expireTime.isValid() || expireTime.isBefore(today)) row.expireTime = null;
+			const expireTime = toUtc(row.expireTime);
+			if (!expireTime.isValid() || !expireTime.isAfter(now)) row.expireTime = null;
 		}
 		return regKeyList;
 	},

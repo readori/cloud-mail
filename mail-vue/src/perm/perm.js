@@ -37,6 +37,17 @@ export function permsToRouter(permKeys) {
 }
 
 const routers = {
+    'login-log:query': [{
+        path: '/admin/login-log',
+        name: 'login-log',
+        component: () => import('@/views/login-log/index.vue'),
+        meta: {
+            title: 'loginLog',
+            name: 'login-log',
+            menu: true,
+            workspace: 'admin'
+        }
+    }],
     'email:send': [
         {
             path: '/mail/sent',

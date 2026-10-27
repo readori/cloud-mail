@@ -144,6 +144,8 @@ function applyRuntimeFields(c, row) {
 		if (row[key] === undefined || row[key] === null) row[key] = value;
 	}
 	row.domainList = parseDomains(c).map(item => `@${item}`);
+	// 上游 v3.4 移除「对象存储访问域名」：附件/图片统一经本站 /attachments、/static 代理访问
+	row.r2Domain = '';
 	row.projectLink = parseBooleanEnv(c.env.project_link, true);
 	// 兼容旧版通过环境变量配置的 Linux DO 登录：后台未填写时回退到环境变量
 	if (!row.linuxdoClientId && c.env.linuxdo_client_id) {

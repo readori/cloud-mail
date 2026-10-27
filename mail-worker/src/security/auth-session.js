@@ -59,6 +59,17 @@ export function setWebSession(c, jwt) {
 	return csrfToken;
 }
 
+// 滑动续期：只更新会话 Cookie，不轮换 CSRF Token，避免并发请求的 CSRF 校验失败。
+export function refreshWebSessionCookie(c, jwt) {
+	setCookie(c, sessionCookieName(c), jwt, {
+		httpOnly: true,
+		secure: requestIsHttps(c),
+		sameSite: 'Strict',
+		path: '/',
+		maxAge: constant.TOKEN_EXPIRE
+	});
+}
+
 export function clearWebSession(c) {
 	for (const name of [PROD_SESSION_COOKIE, DEV_SESSION_COOKIE, CSRF_COOKIE]) {
 		deleteCookie(c, name, { path: '/', secure: name === PROD_SESSION_COOKIE });
