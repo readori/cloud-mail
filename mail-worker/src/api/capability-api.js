@@ -12,13 +12,14 @@ app.get('/capabilities', async (c) => {
 		folders: false,
 		trash: false,
 		spam: false,
-		serverSearch: false,
+		serverSearch: true,
 		serverDrafts: false,
 		serverScheduledSend: false,
 		emailDetail: true,
 		extendedRecipients: true,
 		pushRegistration: pushWebhookService.isConfigured(c),
 		telegramTest: true,
-		rawMessageSource: true
+		rawMessageSource: true,
+		separateSend: true
 	}));
 });

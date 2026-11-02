@@ -369,7 +369,8 @@ const userService = {
 		if (accountRow?.isDel === isDel.DELETE) throw new BizError(t('isDelUser'));
 		if (accountRow) throw new BizError(t('isRegAccount'), 409);
 		if (!role) throw new BizError(t('roleNotExist'));
-		if (!roleService.hasAvailDomainPerm(role.availDomain, email)) throw new BizError(t('noDomainPermAdd'), 403);
+		// 与上游一致：身份的可用域名只限制用户自己注册/添加邮箱，管理员在后台添加用户不受其限制。
+		// 域名本身仍必须是 Worker 配置的邮件域名(上面已校验)。
 
 		const { salt, hash } = await saltHashUtils.hashPassword(password, saltHashUtils.iterationsFromEnv(c.env));
 		const userId = await this.insert(c, { email, password: hash, salt, type: role.roleId });

@@ -88,6 +88,14 @@ describe('CloudMail runtime smoke', () => {
 		});
 		expect(await addDefault.json()).toMatchObject({ code: 200 });
 
+		// 身份限定了其他可用域名时，管理员仍可在后台为该身份添加用户
+		await env.db.prepare("UPDATE role SET avail_domain = 'other.example' WHERE role_id = ?").bind(type).run();
+		const addRestricted = await SELF.fetch('http://example.com/api/user/add', {
+			method: 'POST', headers: auth,
+			body: JSON.stringify({ email: 'restricted-role@example.com', password: 'new-user-password', type })
+		});
+		expect(await addRestricted.json()).toMatchObject({ code: 200 });
+
 		const newLogin = await SELF.fetch('http://example.com/api/login', {
 			method: 'POST', headers: json,
 			body: JSON.stringify({ email: 'new-user@example.com', password: 'new-user-password' })
