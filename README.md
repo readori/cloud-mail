@@ -32,8 +32,27 @@ Useful links:
 - **Verification-code extraction** — optional Workers AI processing for verification-code extraction.
 - **Analytics** — ECharts-based system, user, and mail growth dashboards.
 - **Customization** — configurable site title, login presentation, transparency, and related UI settings.
-- **Turnstile protection** — Cloudflare Turnstile integration for registration and abuse protection.
+- **Turnstile protection** — Cloudflare Turnstile for registration, adding addresses, and (optionally) login.
+- **Real-time inbox** — new mail appears instantly over WebSocket (Durable Object), with polling as a fallback.
+- **Image privacy proxy** — remote images in mail bodies load through a signed same-origin proxy that strips tracking pixels.
 - **Security hardening** — protected initialization, signed webhooks, encrypted dynamic secrets, hardened sessions, migration checks, and production contract tests.
+
+## Latest updates
+
+### 2026-11 · synced with upstream cloud-mail v3.6.0
+
+- **Real-time mail push** — the inbox and the admin all-mail view update instantly over WebSocket (`/realtime`, `MailHub` SQLite Durable Object). Sessions are authenticated with the HttpOnly session cookie and the request origin is checked; when the socket drops, the Web client falls back to polling at the configured auto-refresh interval.
+- **Signed image proxy** — external images are rewritten to `/proxy?url=…` (HMAC-signed, valid for one hour, tracking pixels removed) so readers do not expose their IP to senders. Original URLs are restored before mail is sent or quoted.
+- **Login Turnstile** — new *Login verification* setting: always, off (default), or only after N logins from the same IP per day.
+- **Session safety** — changing your own password keeps the current session and signs out every other device; tokens now carry an auth generation.
+- **Forwarding** — on-site mail between local users is now pushed and forwarded (Telegram, webhook, and the `forward` Email Routing binding). Forwarding rules match either the user's login address or the recipient address, and webhooks follow the same rules.
+- **All-mail search** — admins can search all mail by user, account, sender, recipient, subject, or body, and filter by date.
+- **Hardening** — attachment responses are served with XSS-safe content types and dispositions, outbound messages are limited to 50 recipients, and non-Chinese clients receive English messages.
+- **Admin bootstrap** — set the optional `ADMIN_PASSWORD` secret and `/init` creates the `ADMIN` account if it does not exist yet.
+
+**Upgrading:** run the deployment workflow once with `deploy-and-migrate`. It adds the new `login_verify` setting columns and an index, and the rendered Wrangler config now includes the `ws` Durable Object binding (with its `v1` migration) and the `forward` `send_email` binding.
+
+**Fixed:** migration `0005_email_sender.sql` is now re-runnable. Databases where `/init` or the Worker's runtime schema heal had already added `email.sender_email` no longer fail `deploy-and-migrate` with `duplicate column name: sender_email`.
 
 ## Technology stack
 

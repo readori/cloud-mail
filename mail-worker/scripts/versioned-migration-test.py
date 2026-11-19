@@ -27,6 +27,14 @@ FIXTURES = {
     'legacy-3.0': BASE,
     'gateway-3.5': BASE + 'CREATE UNIQUE INDEX idx_ps ON push_subscription(user_id, subscription_id);\n',
     'hardened-3.8': BASE + 'CREATE TABLE rate_limit_bucket(bucket_key TEXT PRIMARY KEY,count INTEGER NOT NULL,expires_at INTEGER NOT NULL);\n',
+    'init-healed-3.4': BASE,
+}
+
+# POST /api/init (v4_0DB) or the runtime schema heal (src/init/schema-heal.js) may add
+# email.sender_email before the versioned migrations run. Every migration must still apply
+# (regression: 0005 used a bare ALTER TABLE and failed with "duplicate column name").
+POST_SEED = {
+    'init-healed-3.4': "ALTER TABLE email ADD COLUMN sender_email TEXT NOT NULL DEFAULT '';",
 }
 
 def seed(db: sqlite3.Connection) -> None:
@@ -57,9 +65,14 @@ def run_fixture(name: str, schema: str) -> None:
     db = sqlite3.connect(':memory:')
     db.executescript(schema)
     seed(db)
+    if name in POST_SEED:
+        db.executescript(POST_SEED[name])
     for _, migration in MIGRATIONS:
         db.executescript(migration)
     assert db.execute("SELECT value FROM cloudmail_schema_meta WHERE key='integrity_schema'").fetchone()[0] == '2'
+    assert db.execute("SELECT value FROM cloudmail_schema_meta WHERE key='email_sender_column'").fetchone()[0] == 'worker-managed'
+    # The column-ownership marker is safe to re-run.
+    db.executescript(dict(MIGRATIONS)['0005_email_sender.sql'])
 
     must_abort(db, "INSERT INTO account VALUES (11, 999, 'bad@example.com')", 'integrity:account.user_id')
     must_abort(db, "INSERT INTO email(email_id,user_id,account_id,subject,is_del) VALUES (101, 1, 999, 'bad', 0)", 'integrity:email.owner')
