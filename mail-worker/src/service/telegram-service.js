@@ -1,6 +1,7 @@
 import orm from '../entity/orm';
 import email from '../entity/email';
 import settingService from './setting-service';
+import proxyService from './proxy-service';
 import { eq } from 'drizzle-orm';
 import jwtUtils from '../utils/jwt-utils';
 import { buildTelegramEmailMessages } from '../template/email-msg';
@@ -112,7 +113,11 @@ const telegramService = {
 		if (!emailRow) return emailTextTemplate('The email does not exist');
 		if (emailRow.content) {
 			const { r2Domain } = await settingService.query(c);
-			return emailHtmlTemplate(emailRow.content || '', r2Domain);
+			// 上游 v3.6：Telegram 网页预览的外链图改走本站 /proxy，不暴露打开者 IP，并去掉追踪像素。
+			let html = emailRow.content || '';
+			try { html = await proxyService.rewriteHtml(c, html); }
+			catch (error) { console.warn('Telegram 预览图片代理改写失败', error?.message || error); }
+			return emailHtmlTemplate(html, r2Domain);
 		}
 		return emailTextTemplate(emailRow.text || '');
 	},

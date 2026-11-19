@@ -6,7 +6,7 @@
         <div>{{settingStore.settings.title}}</div>
       </div>
       <button v-if="currentWorkspace === 'mail'" v-perm="'email:send'" class="compose-bar" type="button" @click="openCompose">
-        <Icon icon="material-symbols:edit-outline-sharp" width="22" height="22" />
+        <Icon icon="hugeicons:quill-write-01" width="22" height="22" />
         <span>{{ $t('compose') }}</span>
       </button>
       <div v-if="adminAvailable" class="workspace-switch" role="group" :aria-label="$t('workspaceSwitcher')">

@@ -116,7 +116,8 @@ app.use('*', async (c, next) => {
 	})) throw new BizError('CSRF validation failed', 403);
 
 	const tokenPayload = await jwtUtils.verifyToken(c, auth.token);
-	if (!tokenPayload || !Number.isSafeInteger(Number(tokenPayload.userId)) || typeof tokenPayload.token !== 'string') {
+	if (!tokenPayload || !Number.isSafeInteger(Number(tokenPayload.userId)) || typeof tokenPayload.token !== 'string'
+		|| (tokenPayload.gen ?? constant.AUTH_GEN) !== constant.AUTH_GEN) {
 		if (auth.source === 'cookie') clearWebSession(c);
 		throw new BizError(t('authExpired'), 401);
 	}
@@ -152,7 +153,7 @@ app.use('*', async (c, next) => {
 	// App 通过 X-Refreshed-Token 响应头获取，网页端直接更新会话 Cookie。
 	const nowSeconds = Math.floor(Date.now() / 1000);
 	if (Number.isFinite(tokenPayload.exp) && tokenPayload.exp - nowSeconds < TOKEN_RENEW_WINDOW_SECONDS) {
-		const renewed = await jwtUtils.generateToken(c, { userId, token: tokenPayload.token }, constant.TOKEN_EXPIRE);
+		const renewed = await jwtUtils.generateToken(c, { userId, token: tokenPayload.token, gen: constant.AUTH_GEN }, constant.TOKEN_EXPIRE);
 		if (auth.source === 'cookie') refreshWebSessionCookie(c, renewed);
 		else c.header(REFRESHED_TOKEN_HEADER, renewed);
 	}

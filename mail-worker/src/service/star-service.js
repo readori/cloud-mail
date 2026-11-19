@@ -64,6 +64,8 @@ const starService = {
 			for (const emailRow of list) {
 				emailRow.attList = attsList.filter(attRow => attRow.emailId === emailRow.emailId);
 			}
+			// 上游 v3.6：星标完整查询同样走图片代理改写。
+			await emailService.rewriteImageProxy(c, list);
 		} else {
 			emailService.applyListText(list);
 		}

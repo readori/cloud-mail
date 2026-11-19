@@ -181,6 +181,15 @@ const loginService = {
 
 		const email = normalizeEmail(params.email);
 		const password = noVerifyPwd ? null : validatePassword(params.password, { allowLegacy: true });
+		if (!noVerifyPwd) {
+			// 上游 v3.6：登录人机验证。COUNT 模式下同一 IP 每天前 N 次免验证。
+			const { loginVerify, loginVerifyCount } = await settingService.query(c);
+			if (loginVerify === settingConst.loginVerify.OPEN
+				|| (loginVerify === settingConst.loginVerify.COUNT
+					&& !await verifyRecordService.consumeLoginAttempt(c, Number(loginVerifyCount) || 1))) {
+				await turnstileService.verify(c, params.token);
+			}
+		}
 		const userRow = await userService.selectByEmailIncludeDel(c, email);
 		if (!userRow) throw new BizError(t('notExistUser'));
 		if (userRow.isDel === isDel.DELETE) throw new BizError(t('isDelUser'));
@@ -206,7 +215,7 @@ const loginService = {
 		const sessionToken = uuidv4();
 		const jwt = await JwtUtils.generateToken(
 			c,
-			{ userId: userRow.userId, token: sessionToken },
+			{ userId: userRow.userId, token: sessionToken, gen: constant.AUTH_GEN },
 			constant.TOKEN_EXPIRE
 		);
 		const sessionUser = {

@@ -19,6 +19,7 @@ import reqUtils from '../utils/req-utils';
 import {oauth} from "../entity/oauth";
 import oauthService from './oauth-service';
 import loginLogService from './login-log-service';
+import userContext from '../security/user-context';
 import { normalizeEmail, toId, toIdList, toInteger, toPageNumber, toPageSize } from '../utils/input-utils';
 
 function isAdminEmail(c, email) {
@@ -76,7 +77,36 @@ const userService = {
 		const { salt, hash } = await cryptoUtils.hashPassword(password, cryptoUtils.iterationsFromEnv(c.env));
 		const uid = toId(userId, 'userId');
 		await this.updatePasswordHash(c, uid, hash, salt);
-		await c.env.kv.delete(KvConst.AUTH_INFO + uid);
+		// 上游 v3.6：本人修改密码时只保留当前会话，其它设备下线；管理员重置他人密码则全部下线。
+		let currentUserId = null;
+		try { currentUserId = userContext.getUserId(c); } catch { currentUserId = null; }
+		const sessionToken = currentUserId === uid ? await userContext.getToken(c) : null;
+		const authInfo = sessionToken ? await c.env.kv.get(KvConst.AUTH_INFO + uid, { type: 'json' }) : null;
+		if (authInfo?.user && Array.isArray(authInfo.tokens) && authInfo.tokens.includes(sessionToken)) {
+			authInfo.tokens = [sessionToken];
+			await c.env.kv.put(KvConst.AUTH_INFO + uid, JSON.stringify(authInfo), { expirationTtl: constant.TOKEN_EXPIRE });
+		} else {
+			await c.env.kv.delete(KvConst.AUTH_INFO + uid);
+		}
+	},
+
+	// 上游 v3.6：初始化时如果配置了 admin 与 password(建议用 wrangler secret)，自动创建管理员账号。
+	async initAdmin(c) {
+		const email = String(c.env?.admin || '').trim().toLowerCase();
+		const password = c.env?.password;
+		if (!email || typeof password !== 'string' || password.length < 10 || password.length > 128) return;
+		if (await this.selectByEmailIncludeDel(c, email)) return;
+		if (await accountService.selectByEmailIncludeDel(c, email)) return;
+		const role = await roleService.selectDefaultRole(c);
+		const { salt, hash } = await cryptoUtils.hashPassword(password, cryptoUtils.iterationsFromEnv(c.env));
+		const userId = await this.insert(c, { email, password: hash, salt, type: role?.roleId || 1 });
+		try {
+			await accountService.insert(c, { userId, email, name: emailUtils.getName(email) });
+		} catch (error) {
+			await this.rollbackCreate(c, userId);
+			throw error;
+		}
+		await this.updateUserInfo(c, userId, true);
 	},
 
 	async updatePasswordHash(c, userId, hash, salt) {

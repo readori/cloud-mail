@@ -12,10 +12,9 @@ import roleService from '../service/role-service';
 import userService from '../service/user-service';
 import telegramService from '../service/telegram-service';
 import aiService from '../service/ai-service';
-import pushSubscriptionService from '../service/push-subscription-service';
-import pushWebhookService from '../service/push-webhook-service';
 import verifyUtils from '../utils/verify-utils';
 import webhookService from '../service/webhook-service';
+import { notifyMailWs } from '../websocket/notify';
 
 const MAX_RAW_BYTES = 35 * 1024 * 1024;
 const MAX_ADDRESS_ITEMS = 100;
@@ -222,8 +221,12 @@ export async function email(message, env, ctx) {
 		}
 		emailRow = await emailService.completeReceive(context, accountRow ? emailConst.status.RECEIVE : emailConst.status.NOONE, emailRow.emailId);
 
-		const ruleRecipients = String(ruleEmail || '').split(',').map(normalizeAddress).filter(Boolean);
-		const shouldForward = ruleType !== settingConst.ruleType.RULE || ruleRecipients.includes(recipient);
+		// 上游 v3.6：网页端实时推送。有账号推个人收件箱；无人收件只推「全部邮件」。
+		notifyMailWs(env, ctx, emailRow);
+
+		// 上游 v3.6：规则转发改为按用户匹配(用户登录邮箱)，同时兼容直接填写收件地址的旧配置。
+		const shouldForward = ruleType !== settingConst.ruleType.RULE
+			|| emailService.matchForwardRule({ ruleEmail, userEmail: userRow?.email, recipient });
 		const backgroundTasks = [];
 		if (shouldForward && tgBotStatus === settingConst.tgBotStatus.OPEN && tgChatId) {
 			backgroundTasks.push(telegramService.sendEmailToBot(context, emailRow));
@@ -236,15 +239,9 @@ export async function email(message, env, ctx) {
 			}
 		}
 		if (emailRow.userId) {
-			backgroundTasks.push((async () => {
-				const [subscriptions, unreadCount] = await Promise.all([
-					pushSubscriptionService.listByUserId(context, emailRow.userId),
-					emailService.unreadCount(context, emailRow.userId)
-				]);
-				if (subscriptions.length) await pushWebhookService.pushNewMail(context, subscriptions, emailRow, unreadCount);
-			})());
+			backgroundTasks.push(emailService.pushNewMail(context, emailRow));
 		}
-		if (webhookStatus === settingConst.webhookStatus.OPEN && webhookUrl) {
+		if (shouldForward && webhookStatus === settingConst.webhookStatus.OPEN && webhookUrl) {
 			backgroundTasks.push(webhookService.sendEmail(context, emailRow, webhookUrl, webhookRetry, webhookSecret));
 		}
 		if (backgroundTasks.length) ctx.waitUntil(Promise.allSettled(backgroundTasks));

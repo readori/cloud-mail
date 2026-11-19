@@ -33,6 +33,7 @@ const zh = {
 	resendRecipientLimit: 'Resend 分开发送最多支持100位收件人',
 	resendSeparateAttachments: 'Resend 分开发送不能携带附件',
 	separateNoCc: '分开发送不支持抄送和密送',
+	recipientLimit: '收件人、抄送和密送合计不能超过50个',
 	pwdLengthLimit: '密码长度超出限制',
 	emailLengthLimit: '邮箱长度超出限制',
 	minEmailPrefix: '邮箱名至少{{msg}}位',

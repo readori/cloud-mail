@@ -194,6 +194,7 @@ Configure these under **Repository → Settings → Secrets and variables → Ac
 | `CONFIG_ENCRYPTION_KEY_PREVIOUS` | No | Previous configuration-encryption key during a key-rotation window only. |
 | `RESEND_WEBHOOK_SECRET` | No | Resend webhook signing secret when Resend webhooks are enabled. |
 | `LINUXDO_CLIENT_SECRET` | No | OAuth client secret when that integration is enabled. |
+| `ADMIN_PASSWORD` | No | Initial administrator password (10–128 characters). When set, `/init` creates the `ADMIN` account if it does not exist yet. |
 
 `JWT_SECRET`, `INIT_SECRET`, and `CONFIG_ENCRYPTION_KEY` must be different values.
 

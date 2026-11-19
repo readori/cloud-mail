@@ -18,8 +18,9 @@ i18next.init({
 });
 
 function requestLanguage(c) {
-	const raw = String(c?.req?.header?.('accept-language') || '').toLowerCase();
-	return raw.startsWith('en') ? 'en' : 'zh';
+	// 上游 v3.6：未带语言或非中文时回退英文。
+	const raw = String(c?.req?.header?.('accept-language') || '').trim().toLowerCase();
+	return raw.startsWith('zh') ? 'zh' : 'en';
 }
 
 export const t = (key, values) => i18next.getFixedT('zh')(key, values);

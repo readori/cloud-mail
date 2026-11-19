@@ -1,5 +1,6 @@
 import BizError from '../error/biz-error';
 import constant from '../const/constant';
+import { isSafeInlineAtt } from './att-headers';
 
 const ALLOWED_PREFIXES = [constant.ATTACHMENT_PREFIX, constant.BACKGROUND_PREFIX];
 const DANGEROUS_TYPES = [
@@ -54,9 +55,15 @@ export function objectToResponse(object, key) {
 	const dangerous = DANGEROUS_TYPES.some(type => contentType.toLowerCase().startsWith(type));
 	if (dangerous) {
 		const filename = key.split('/').pop() || 'download';
+		headers.set('Content-Type', 'application/octet-stream');
 		headers.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
 	} else if (metadata.contentDisposition) {
-		headers.set('Content-Disposition', String(metadata.contentDisposition).replace(/[\r\n]/g, '').slice(0, 1024));
+		// 上游 v3.6：只有栅格图片允许在浏览器内联打开，其余类型(PDF、文本等)一律下载。
+		let disposition = String(metadata.contentDisposition).replace(/[\r\n]/g, '').slice(0, 1024);
+		if (!isSafeInlineAtt(contentType) && /^\s*inline\b/i.test(disposition)) disposition = disposition.replace(/^\s*inline/i, 'attachment');
+		headers.set('Content-Disposition', disposition);
+	} else if (!isSafeInlineAtt(contentType) && key.startsWith(constant.ATTACHMENT_PREFIX)) {
+		headers.set('Content-Disposition', 'attachment');
 	}
 	if (metadata.etag) headers.set('ETag', String(metadata.etag).replace(/[\r\n]/g, '').slice(0, 256));
 	return new Response(metadata.body, { status: metadata.status || 200, headers });

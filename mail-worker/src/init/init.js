@@ -3,6 +3,7 @@ import loginLogService from '../service/login-log-service';
 import emailUtils from '../utils/email-utils';
 import { emailConst } from '../const/entity-const';
 import rateLimitService from '../service/rate-limit-service';
+import userService from '../service/user-service';
 
 const dbInit = {
 	async init(c, suppliedSecret) {
@@ -51,9 +52,13 @@ const dbInit = {
 		await this.v3_8DB(c);
 		await this.v3_9DB(c);
 		await this.v4_0DB(c);
+		await this.v4_1DB(c);
 		// Encrypt legacy integration secrets and re-wrap values encrypted with the previous key.
 		await settingService.migrateSecrets(c);
 		await settingService.refresh(c);
+		// 上游 v3.6：配置了 admin 与 password(secret) 且管理员尚未注册时，自动创建管理员账号。
+		try { await userService.initAdmin(c); }
+		catch (error) { console.warn(`自动创建管理员失败：${error?.message || error}`); }
 		return c.text('success');
 	},
 
@@ -68,6 +73,14 @@ const dbInit = {
 		return diff === 0;
 	},
 
+
+	async v4_1DB(c) {
+		// 上游 cloud-mail v3.5/v3.6：登录人机验证字段(login_verify / login_verify_count)，
+		// 以及按用户 + 时间范围搜索邮件的索引。
+		await settingService.ensureLatestColumns(c);
+		try { await c.env.db.prepare(`CREATE INDEX IF NOT EXISTS idx_email_user_create_time ON email(user_id, create_time)`).run(); }
+		catch (error) { console.warn(`跳过索引：${error.message}`); }
+	},
 
 	async v4_0DB(c) {
 		// 上游 cloud-mail v3.4：信封发件人(代发地址)

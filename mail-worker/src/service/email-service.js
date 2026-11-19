@@ -25,6 +25,26 @@ import { att } from '../entity/att';
 import { sanitizeEmailHtml } from '../utils/html-utils';
 import { normalizeEmailList, toId, toIdList, toInteger, toPageSize, toTrimmedString } from '../utils/input-utils';
 import { normalizeEmailCursor, normalizeEmailLatestQuery, normalizeEmailListQuery, normalizeEmailSearch, normalizeFullFlag } from '../utils/email-query-utils';
+import proxyService from './proxy-service';
+import telegramService from './telegram-service';
+import webhookService from './webhook-service';
+import pushSubscriptionService from './push-subscription-service';
+import pushWebhookService from './push-webhook-service';
+import forwardMime from '../utils/forward-mime';
+import { notifyMailWsFromContext } from '../websocket/notify';
+
+// 上游 v3.6：外部投递时单封邮件的收件人+抄送+密送合计上限(Cloudflare Email / Resend 均为 50)。
+const MAX_PROVIDER_RECIPIENTS = 50;
+
+function waitUntilOrAwait(c, task) {
+	let ctx = null;
+	try { ctx = c.executionCtx; } catch { ctx = null; }
+	if (ctx && typeof ctx.waitUntil === 'function') {
+		ctx.waitUntil(task);
+		return Promise.resolve();
+	}
+	return task;
+}
 
 const emailService = {
 
@@ -151,8 +171,9 @@ const emailService = {
 		const sendType = toTrimmedString(params.sendType, { name: 'sendType', max: 32 });
 		const replyEmailId = params.emailId ? toId(params.emailId, 'emailId') : 0;
 		let receiveEmail = normalizeEmailList(params.receiveEmail, { name: '收件人', required: true, maxItems: 100 });
-		let cc = normalizeEmailList(params.cc, { name: '抄送', maxItems: 100 });
-		let bcc = normalizeEmailList(params.bcc, { name: '密送', maxItems: 100 });
+		// 上游 v3.6 网页端用 ccEmail/bccEmail 字段，本分支与 iOS 用 cc/bcc，两种都接受。
+		let cc = normalizeEmailList(params.cc ?? params.ccEmail, { name: '抄送', maxItems: 100 });
+		let bcc = normalizeEmailList(params.bcc ?? params.bccEmail, { name: '密送', maxItems: 100 });
 		const toSet = new Set(receiveEmail);
 		cc = cc.filter(address => !toSet.has(address));
 		const visibleSet = new Set([...receiveEmail, ...cc]);
@@ -163,7 +184,8 @@ const emailService = {
 		let name = toTrimmedString(params.name, { name: '发件人名称', max: 256 });
 		const subject = toTrimmedString(params.subject, { name: '邮件主题', required: true, max: 998 });
 		const text = typeof params.text === 'string' ? params.text.slice(0, 2_000_000) : '';
-		const rawContent = typeof params.content === 'string' ? params.content.slice(0, 2_000_000) : '';
+		// 上游 v3.6：引用正文里的 /proxy?url= 图片代理地址还原成原始外链再发出。
+		const rawContent = typeof params.content === 'string' ? proxyService.restoreHtml(params.content.slice(0, 2_000_000)) : '';
 		const attachments = params.attachments === undefined ? [] : params.attachments;
 		if (!Array.isArray(attachments)) throw new BizError('附件格式错误', 400);
 
@@ -221,6 +243,9 @@ const emailService = {
 		// 上游 v3.4：分开发送(manyType=divide)——每位收件人单独收到一封邮件，互相看不到其他收件人。
 		const separate = params.manyType === 'divide';
 		if (separate && (cc.length > 0 || bcc.length > 0)) throw new BizError(t('separateNoCc'), 400);
+		if (!allInternal && (separate ? 1 : receiveEmail.length) + cc.length + bcc.length > MAX_PROVIDER_RECIPIENTS) {
+			throw new BizError(t('recipientLimit'), 400);
+		}
 
 		const providerBase = {
 			name,
@@ -264,7 +289,10 @@ const emailService = {
 			const attList = await attService.selectByEmailIds(c, [emailResult.emailId]);
 			emailResult.attList = attList;
 
-			if (allInternal) await this.HandleOnSiteEmail(c, recipients, emailResult, attList);
+			if (allInternal) {
+				const deliveredRows = await this.HandleOnSiteEmail(c, recipients, emailResult, attList);
+				await this.afterOnSiteDelivery(c, deliveredRows, { ...providerBase, receiveEmail: to, cc: ccList });
+			}
 			if (!admin && Number(roleRow.sendCount) > 0 && roleRow.sendType !== 'internal') {
 				await userService.incrUserSendCount(c, recipients.length, uid);
 			}
@@ -506,7 +534,7 @@ const emailService = {
 	//处理站内邮件发送
 	async HandleOnSiteEmail(c, receiveEmail, sendEmailData, attList = []) {
 		const recipients = [...new Set((receiveEmail || []).map(item => String(item).trim().toLowerCase()).filter(Boolean))];
-		if (recipients.length === 0) return;
+		if (recipients.length === 0) return [];
 		const { noRecipient } = await settingService.query(c);
 		// Plus Address：name+tag@domain 没有独立邮箱时投递到主地址 name@domain
 		const baseEmails = recipients
@@ -576,8 +604,10 @@ const emailService = {
 		}
 
 		const deliverable = emailDataList.filter(row => row.status === emailConst.status.RECEIVE || row.status === emailConst.status.NOONE);
+		const deliveredRows = [];
 		for (const emailData of deliverable) {
 			const emailRow = await orm(c).insert(email).values(emailData).returning().get();
+			deliveredRows.push(emailRow);
 			for (const source of attList) {
 				const { attId, ...copy } = source;
 				await orm(c).insert(att).values({ ...copy, emailId: emailRow.emailId, accountId: emailRow.accountId, userId: emailRow.userId }).run();
@@ -588,6 +618,91 @@ const emailService = {
 		const status = bounced ? emailConst.status.BOUNCED : emailConst.status.DELIVERED;
 		const message = bounced ? JSON.stringify({ message: bounced.message }) : '';
 		await orm(c).update(email).set({ status, message }).where(eq(email.emailId, sendEmailData.emailId)).run();
+		return deliveredRows;
+	},
+
+	// 站内互发不经过 email 事件：补齐网页实时推送、iOS 推送，并按转发规则转发(上游 v3.6 forwardOnSiteEmail)。
+	async afterOnSiteDelivery(c, rows = [], sendParams = {}) {
+		if (!rows.length) return;
+		const tasks = [];
+		for (const row of rows) {
+			notifyMailWsFromContext(c, row);
+			if (row.userId) tasks.push(this.pushNewMail(c, row));
+		}
+		tasks.push(this.forwardOnSiteEmail(c, rows, sendParams));
+		const all = Promise.allSettled(tasks).then(results => {
+			for (const result of results) {
+				if (result.status === 'rejected') console.error('站内邮件推送/转发失败', result.reason?.message || result.reason);
+			}
+		});
+		await waitUntilOrAwait(c, all);
+	},
+
+	async pushNewMail(c, emailRow) {
+		const [subscriptions, unreadCount] = await Promise.all([
+			pushSubscriptionService.listByUserId(c, emailRow.userId),
+			this.unreadCount(c, emailRow.userId)
+		]);
+		if (subscriptions.length) await pushWebhookService.pushNewMail(c, subscriptions, emailRow, unreadCount);
+	},
+
+	// 规则转发(上游 v3.6 改为按用户)：名单可填用户登录邮箱(该用户所有邮箱都转发)，
+	// 也兼容旧配置里直接填写的收件邮箱地址。
+	matchForwardRule({ ruleEmail, userEmail, recipient }) {
+		const list = String(ruleEmail || '').split(',').map(item => item.trim().toLowerCase()).filter(Boolean);
+		const candidates = [userEmail, recipient].map(item => String(item || '').trim().toLowerCase()).filter(Boolean);
+		return candidates.some(item => list.includes(item));
+	},
+
+	async forwardOnSiteEmail(c, rows, sendParams) {
+		const {
+			tgBotStatus, tgChatId, forwardStatus, forwardEmail, webhookStatus, webhookUrl,
+			webhookRetry, webhookSecret, ruleEmail, ruleType
+		} = await settingService.query(c);
+		let targets = rows;
+		if (ruleType === settingConst.ruleType.RULE) {
+			const userIds = [...new Set(rows.map(row => row.userId).filter(Boolean))];
+			const userRows = userIds.length
+				? await orm(c).select({ userId: user.userId, email: user.email }).from(user).where(inArray(user.userId, userIds)).all()
+				: [];
+			const userEmailById = new Map(userRows.map(row => [row.userId, row.email]));
+			targets = rows.filter(row => this.matchForwardRule({ ruleEmail, userEmail: userEmailById.get(row.userId), recipient: row.toEmail }));
+		}
+		if (!targets.length) return;
+		for (const row of targets) {
+			if (tgBotStatus === settingConst.tgBotStatus.OPEN && tgChatId) {
+				try { await telegramService.sendEmailToBot(c, row); }
+				catch (error) { console.error('站内邮件转发 Telegram 失败', error?.message || error); }
+			}
+			if (webhookStatus === settingConst.webhookStatus.OPEN && webhookUrl) {
+				try { await webhookService.sendEmail(c, row, webhookUrl, webhookRetry, webhookSecret); }
+				catch (error) { console.error('站内邮件转发 Webhook 失败', error?.message || error); }
+			}
+		}
+		// 转发到其他邮箱：发件人用站内实际发件人，信头收件人保留原收件人，信封送到已验证地址。
+		// 需要 [[send_email]] name = "forward" 绑定；未绑定时跳过。
+		if (forwardStatus !== settingConst.forwardStatus.OPEN || !forwardEmail || !c.env?.forward) return;
+		const addresses = [...new Set(String(forwardEmail).split(',').map(item => item.trim().toLowerCase()).filter(Boolean))].slice(0, 20);
+		if (!addresses.length) return;
+		const params = {
+			name: sendParams.name,
+			accountEmail: sendParams.accountEmail,
+			subject: sendParams.subject,
+			text: sendParams.text,
+			html: sendParams.html,
+			sendType: sendParams.sendType,
+			messageId: sendParams.messageId,
+			attachments: await this.toCloudflareAttachments(sendParams.attachments || []),
+			receiveEmail: targets.map(row => ({ address: row.toEmail, name: row.toName || '' })).filter(item => item.address),
+			ccEmail: (sendParams.cc || []).map(address => ({ address, name: '' }))
+		};
+		await Promise.all(addresses.map(async address => {
+			try {
+				await forwardMime.send(c.env.forward, params, address);
+			} catch (error) {
+				console.error(`转发邮箱 ${address} 失败`, error?.message || error);
+			}
+		}));
 	},
 
 	imgReplace(content, cidAttList = [], r2domain) {
@@ -647,10 +762,11 @@ const emailService = {
 				eq(email.isDel, isDel.NORMAL),
 				eq(account.isDel, isDel.NORMAL),
 				allReceive ? eq(1, 1) : eq(email.accountId, accountId),
-				eq(email.type, emailConst.type.RECEIVE)
+				eq(email.type, emailConst.type.RECEIVE),
+				ne(email.status, emailConst.status.SAVING)
 			))
 			.orderBy(desc(email.emailId))
-			.limit(20);
+			.limit(50);
 		await this.emailAddAtt(c, list);
 		for (const item of list) {
 			item.listText = this.toListText(item);
@@ -745,6 +861,8 @@ const emailService = {
 		const accountEmail = toTrimmedString(params.accountEmail, { name: 'accountEmail', max: 254 });
 		const userEmail = toTrimmedString(params.userEmail, { name: 'userEmail', max: 254 });
 		const full = normalizeFullFlag(params.full);
+		// 上游 v3.5：全部邮件搜索(关键词 + 搜索类型 + 起止时间)
+		const { text: searchText, searchType, startDate, endDate } = normalizeEmailSearch(params);
 		const conditions = [];
 		if (type === 'send') conditions.push(eq(email.type, emailConst.type.SEND));
 		if (type === 'receive') conditions.push(eq(email.type, emailConst.type.RECEIVE));
@@ -757,6 +875,20 @@ const emailService = {
 		));
 		if (name) conditions.push(sql`${email.name} COLLATE NOCASE LIKE ${`%${name}%`}`);
 		if (subject) conditions.push(sql`${email.subject} COLLATE NOCASE LIKE ${`%${subject}%`}`);
+		const searchUser = !!searchText && searchType === 'user';
+		if (searchText) {
+			const pattern = '%' + searchText.replace(/[\\%_]/g, char => '\\' + char) + '%';
+			const like = column => sql`${column} LIKE ${pattern} ESCAPE '\\'`;
+			if (searchType === 'user') conditions.push(like(user.email));
+			else if (searchType === 'account') conditions.push(or(like(email.toEmail), like(email.sendEmail)));
+			else if (searchType === 'sender') conditions.push(like(email.name));
+			else if (searchType === 'senderAddress') conditions.push(like(email.sendEmail));
+			else if (searchType === 'recipientAddress') conditions.push(like(email.toEmail));
+			else if (searchType === 'content') conditions.push(or(like(email.text), like(email.content)));
+			else conditions.push(like(email.subject));
+		}
+		if (startDate) conditions.push(gte(email.createTime, startDate));
+		if (endDate) conditions.push(lte(email.createTime, endDate));
 		conditions.push(ne(email.status, emailConst.status.SAVING));
 		const countConditions = [...conditions];
 		conditions.unshift(timeSort ? gt(email.emailId, emailId) : lt(email.emailId, emailId));
@@ -766,7 +898,7 @@ const emailService = {
 		const [list, totalRow, latestEmail] = await Promise.all([
 			query.limit(size).all(),
 			// 不按用户邮箱搜索时 count 无需 join user
-			(userEmail
+			(userEmail || searchUser
 				? orm(c).select({ total: count() }).from(email).leftJoin(user, eq(email.userId, user.userId))
 				: orm(c).select({ total: count() }).from(email)
 			).where(and(...countConditions)).get(),
@@ -790,7 +922,7 @@ const emailService = {
 		const list = await orm(c).select({ ...email, userEmail: user.email }).from(email)
 			.leftJoin(user, eq(email.userId, user.userId))
 			.where(and(gt(email.emailId, emailId), eq(email.type, emailConst.type.RECEIVE), ne(email.status, emailConst.status.SAVING)))
-			.orderBy(desc(email.emailId)).limit(20);
+			.orderBy(desc(email.emailId)).limit(50);
 		await this.emailAddAtt(c, list);
 		for (const item of list) {
 			item.listText = this.toListText(item);
@@ -811,6 +943,19 @@ const emailService = {
 				emailRow.attList = atts;
 			});
 		}
+
+		// 上游 v3.6：完整邮件查询时，把正文外链图改成带签名的本站 /proxy?url= 地址。
+		await this.rewriteImageProxy(c, list);
+	},
+
+	async rewriteImageProxy(c, list) {
+		try {
+			await proxyService.rewriteList(c, list);
+		} catch (error) {
+			// 代理改写失败(如缺少 jwt_secret)时保留原始正文，不影响读信。
+			console.warn('邮件图片代理改写失败', error?.message || error);
+		}
+		return list;
 	},
 
 	async restoreByUserId(c, userId) {
@@ -889,7 +1034,7 @@ const emailService = {
 
 	async batchDelete(c, params = {}) {
 		const type = toTrimmedString(params.type, { name: 'type', max: 16 });
-		if (type && !['left', 'right', 'include', 'exact'].includes(type)) throw new BizError('匹配类型无效', 400);
+		if (type && !['eq', 'left', 'right', 'include', 'exact'].includes(type)) throw new BizError('匹配类型无效', 400);
 		const right = type === 'left' || type === 'include';
 		const left = type === 'right' || type === 'include';
 		const conditions = [];

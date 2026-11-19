@@ -34,7 +34,8 @@ function assertAllAccountsScope(accountId, allReceive) {
 }
 
 
-const SEARCH_TYPES = new Set(['subject', 'content', 'sender', 'senderAddress', 'recipientAddress']);
+// user / account 仅用于管理员「全部邮件」搜索(上游 v3.5)。
+const SEARCH_TYPES = new Set(['subject', 'content', 'sender', 'senderAddress', 'recipientAddress', 'user', 'account']);
 const SEARCH_DATE = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$/;
 
 function searchDate(value, name) {

@@ -13,60 +13,23 @@
                  :time-sort="params.timeSort"
                  :item-height="65"
                  @jump="jumpContent"
-                 @refresh-before="refreshBefore"
+                 @refresh-success="onRefreshSuccess"
                  @right-search="rightSearch"
-                 :highlight-text="appliedSearchText"
+                 :highlight-text="allEmailStore.searchParams.text"
                  :type="'all-email'"
 
     >
       <template #first>
-        <el-input
-            v-model="searchValue"
-            :placeholder="$t('searchByContent')"
-            class="search-input"
-        >
-          <template #prefix>
-            <div @click.stop="openSelect">
-              <el-select
-                  ref="mySelect"
-                  v-model="params.searchType"
-                  :placeholder="$t('select')"
-                  class="select"
-              >
-                <el-option key="3" :label="$t('sender')" :value="'name'"/>
-                <el-option key="4" :label="$t('subject')" :value="'subject'"/>
-                <el-option key="1" :label="$t('user')" :value="'user'"/>
-                <el-option key="2" :label="$t('selectEmail')" :value="'account'"/>
-              </el-select>
-              <div class="search-type">
-                <span>{{ selectTitle }}</span>
-                <Icon class="setting-icon" icon="mingcute:down-small-fill" width="20" height="20"/>
-              </div>
-            </div>
-          </template>
-        </el-input>
-        <el-select v-model="params.type" placeholder="Select" class="status-select" @change="typeSelectChange">
-          <el-option key="1" :label="$t('all')" value="all"/>
-          <el-option key="3" :label="$t('received')" value="receive"/>
-          <el-option key="2" :label="$t('sent')" value="send"/>
-          <el-option key="4" :label="$t('selectDeleted')" value="delete"/>
-          <el-option key="4" :label="$t('noRecipientTitle')" value="noone"/>
-        </el-select>
-        <Icon class="icon" icon="iconoir:search" @click="search" width="20" height="20"/>
-        <Icon class="icon" @click="changeTimeSort" icon="material-symbols-light:timer-arrow-down-outline"
-              v-if="params.timeSort === 0" width="28" height="28"/>
-        <Icon class="icon" @click="changeTimeSort" icon="material-symbols-light:timer-arrow-up-outline" v-else
-              width="28" height="28"/>
-        <Icon class="icon clear" icon="fluent:broom-sparkle-16-regular" width="22" height="22" @click="openBathDelete"/>
+        <Icon class="icon" icon="fluent:broom-sparkle-16-regular" width="22" height="22" @click="openBathDelete"/>
       </template>
     </emailScroll>
     <el-dialog v-model="showBathDelete" :title="$t('clearEmail')" width="335"
                @closed="closedClear">
       <div class="clear-email">
-        <el-input v-model="clearParams.sendName" :placeholder="$t('sender')"/>
-        <el-input v-model="clearParams.subject" :placeholder="$t('subject')"/>
-        <el-input v-model="clearParams.sendEmail" :placeholder="$t('sendEmailAddress')"/>
-        <el-input v-model="clearParams.toEmail" :placeholder="$t('toEmail')"/>
+        <el-input v-model="clearParams.sendName" :placeholder="$t('sender')" @keyup.enter="batchDelete"/>
+        <el-input v-model="clearParams.subject" :placeholder="$t('subject')" @keyup.enter="batchDelete"/>
+        <el-input v-model="clearParams.sendEmail" :placeholder="$t('sendEmailAddress')" @keyup.enter="batchDelete"/>
+        <el-input v-model="clearParams.toEmail" :placeholder="$t('toEmail')" @keyup.enter="batchDelete"/>
         <el-date-picker popper-class="my-date-picker"
                         v-model="clearTime"
                         type="daterange"
@@ -91,7 +54,8 @@
 <script setup>
 import {starAdd, starCancel} from "@/request/star.js";
 import emailScroll from "@/components/email-scroll/index.vue"
-import {computed, defineOptions, reactive, ref, watch, onMounted, onUnmounted} from "vue";
+import {defineOptions, reactive, ref, watch, onMounted, onBeforeUnmount} from "vue";
+import {useAllEmailStore} from "@/store/all-email.js";
 import {useEmailStore} from "@/store/email.js";
 import {
   allEmailList,
@@ -105,39 +69,63 @@ import {useI18n} from 'vue-i18n';
 import {toUtc} from "@/utils/day.js";
 import {sleep} from "@/utils/time-utils.js";
 import {useSettingStore} from "@/store/setting.js";
-import { useRoute } from 'vue-router'
+import {allEmailWs, isAutoRefreshEnabled} from "@/websocket/client.js";
 
 defineOptions({
   name: 'all-email'
 })
 
-const route = useRoute()
 const {t} = useI18n();
 const emailStore = useEmailStore();
+const allEmailStore = useAllEmailStore();
 const settingStore = useSettingStore();
 const clearTime = ref('')
 const sysEmailScroll = ref({})
-const searchValue = ref('')
-const mySelect = ref()
 const showBathDelete = ref(false)
 const clearLoading = ref(false)
+let pullTimer = null
+
+// 组件卸载(如退出登录)后停止轮询，避免旧循环访问已销毁的 scroll 引用
+let pollingStopped = false
 
 onMounted(() => {
-  latest();
+  // 全部邮件实时：连共享 hub，含无人收件；重连后补拉。未连上时按自动刷新间隔轮询兜底。
+  allEmailWs.start({
+    isEnabled: () => isAutoRefreshEnabled(settingStore.settings.autoRefresh),
+    onMessage: () => schedulePullLatest(),
+    onReconnect: () => schedulePullLatest(),
+  });
+  pollLatest()
 })
 
-const openSelect = () => {
-  mySelect.value.toggleMenu()
+onBeforeUnmount(() => {
+  pollingStopped = true
+  if (pullTimer) {
+    window.clearTimeout(pullTimer)
+    pullTimer = null
+  }
+  allEmailWs.stop()
+})
+
+async function pollLatest() {
+  while (!pollingStopped) {
+    const autoRefresh = settingStore.settings.autoRefresh
+    await sleep(autoRefresh > 1 ? autoRefresh * 1000 : 3000)
+    if (pollingStopped || allEmailWs.isConnected() || autoRefresh <= 1) continue
+    await pullLatest()
+  }
+}
+
+watch(() => settingStore.settings.autoRefresh, () => {
+  allEmailWs.sync()
+})
+
+function onRefreshSuccess() {
+  allEmailWs.retryNow()
 }
 
 const params = reactive({
   timeSort: 0,
-  type: 'receive',
-  userEmail: null,
-  accountEmail: null,
-  name: null,
-  subject: null,
-  searchType: 'name'
 })
 
 const clearParams = reactive({
@@ -166,35 +154,21 @@ function closedClear() {
   clearTime.value = null
 }
 
-const appliedSearchText = computed(() => params.name || params.subject || params.userEmail || params.accountEmail || '')
-
-const selectTitle = computed(() => {
-  if (params.searchType === 'user') return t('user')
-  if (params.searchType === 'account') return t('selectEmail')
-  if (params.searchType === 'name') return t('sender')
-  if (params.searchType === 'subject') return t('subject')
-})
-
-const paramsStar = localStorage.getItem('all-email-params')
-if (paramsStar) {
-  const locaParams = JSON.parse(paramsStar)
-  params.type = locaParams.type
-  params.timeSort = locaParams.timeSort
-  params.status = locaParams.status
-  params.searchType = locaParams.searchType
-}
-
-watch(() => params, () => {
-  localStorage.setItem('all-email-params', JSON.stringify(params))
-}, {
-  deep: true
-})
+watch(
+  () => allEmailStore.searchParams,
+  () => {
+    sysEmailScroll.value.refreshList?.()
+  },
+  {deep: true}
+)
 
 function openBathDelete() {
   showBathDelete.value = true
 }
 
 function batchDelete() {
+
+  if (clearLoading.value) return
 
   if (clearTime.value) {
     clearParams.startTime = toUtc(clearTime.value[0]).format("YYYY-MM-DD HH:mm:ss")
@@ -231,55 +205,13 @@ function batchDelete() {
 }
 
 function rightSearch(type, value) {
-  params.searchType = type;
-  searchValue.value = value;
-  search();
-}
-
-function refreshBefore() {
-  searchValue.value = null
-  params.timeSort = 0
-  params.type = 'receive'
-  params.userEmail = null
-  params.accountEmail = null
-  params.name = null
-  params.subject = null
-  params.searchType = 'name'
-}
-
-function search() {
-
-  params.userEmail = null
-  params.accountEmail = null
-  params.name = null
-  params.subject = null
-
-  if (params.searchType === 'user') {
-    params.userEmail = searchValue.value
-  }
-
-  if (params.searchType === 'account') {
-    params.accountEmail = searchValue.value
-  }
-
-  if (params.searchType === 'name') {
-    params.name = searchValue.value
-  }
-
-  if (params.searchType === 'subject') {
-    params.subject = searchValue.value
-  }
-
-  sysEmailScroll.value.refreshList();
-}
-
-function changeTimeSort() {
-  params.timeSort = params.timeSort ? 0 : 1
-  search()
-}
-
-function typeSelectChange() {
-  search()
+  const typeMap = {name: 'sender', user: 'user', account: 'account'}
+  allEmailStore.setSearchParams({
+    text: value || '',
+    type: typeMap[type] || 'subject',
+    startDate: '',
+    endDate: '',
+  })
 }
 
 function jumpContent(email) {
@@ -292,84 +224,87 @@ function jumpContent(email) {
 
 
 function getEmailList(emailId, size) {
-  const query = {size, ...params}
+  const search = allEmailStore.searchParams
+  const query = {size}
   // 降序第一页不发送 emailId=0，兼容旧后端；升序第一页的 0 是有效游标。
   if (emailId > 0 || params.timeSort === 1) query.emailId = emailId
   // 先取摘要列表快速渲染，再后台拉取完整数据(正文/附件)用于详情
-  return emailStore.fetchList(full => allEmailList({...query, full}))
+  return emailStore.fetchList(full => allEmailList({
+    ...query,
+    full,
+    timeSort: params.timeSort,
+    type: search.status || 'all',
+    text: search.text,
+    searchType: search.type,
+    startDate: search.startDate,
+    endDate: search.endDate,
+  }))
 }
 
-// 组件卸载(如退出登录)后停止轮询，避免旧循环访问已销毁的 scroll 引用
-let pollingStopped = false
-onUnmounted(() => {
-  pollingStopped = true
-})
+// 短时间多条推送合并成一次补拉。
+function schedulePullLatest() {
+  if (pullTimer) {
+    window.clearTimeout(pullTimer)
+  }
+  pullTimer = window.setTimeout(() => {
+    pullTimer = null
+    void pullLatest()
+  }, 150)
+}
 
-async function latest() {
+// 按当前列表最新 id 拉取之后的新邮件并插入。
+let pulling = false
+async function pullLatest() {
+  if (pulling) {
+    schedulePullLatest()
+    return
+  }
+  if (pollingStopped || !sysEmailScroll.value) {
+    return
+  }
+  const latestId = sysEmailScroll.value.latestEmail?.emailId
 
-  while (!pollingStopped) {
+  if (!latestId && latestId !== 0) {
+    return
+  }
 
-    let autoRefresh = settingStore.settings.autoRefresh;
+  if (sysEmailScroll.value.firstLoad) {
+    return
+  }
 
-    await sleep(autoRefresh > 1 ? autoRefresh * 1000 : 3000);
+  const search = allEmailStore.searchParams
+  if (search.text || search.startDate || search.endDate || (search.status && search.status !== 'all' && search.status !== 'receive')) {
+    return
+  }
 
-    if (pollingStopped || !sysEmailScroll.value) {
-      continue
+  pulling = true
+  try {
+    const curTimeSort = params.timeSort
+    const curStatus = search.status
+    const list = await allEmailLatest(latestId)
+
+    if (list.length === 0) {
+      return
     }
 
-    const latestId = sysEmailScroll.value.latestEmail?.emailId
-
-    if (autoRefresh < 2) {
-      continue
+    if (params.timeSort !== curTimeSort || allEmailStore.searchParams.status !== curStatus) {
+      return
     }
 
-    if (!latestId && latestId !== 0) {
-      continue
+    emailStore.applyFullList(list)
+
+    for (let email of list) {
+      sysEmailScroll.value?.addItem(email)
+      await sleep(50)
     }
-
-    if (route.name !== 'all-email') {
-      continue
+  } catch (e) {
+    if (e.code === 401 || e.code === 403) {
+      settingStore.settings.autoRefresh = 0;
+      allEmailWs.sync();
     }
-
-
-    if (params.type !== 'receive') {
-      continue
-    }
-
-    try {
-
-      const curTimeSort = params.timeSort
-      let list = await allEmailLatest(latestId)
-
-      if (list.length === 0) {
-        continue
-      }
-
-      if (params.type !== 'receive') {
-        continue
-      }
-
-      // 确保回来之后条件没变
-      if (params.timeSort !== curTimeSort) {
-        continue
-      }
-
-      emailStore.applyFullList(list)
-
-      for (let email of list) {
-
-        sysEmailScroll.value?.addItem(email)
-        await sleep(50)
-
-      }
-
-    } catch (e) {
-      if (e.code === 401 || e.code === 403) {
-        settingStore.settings.autoRefresh = 0;
-      }
-      console.error(e)
-    }
-
+    console.error(e)
+  } finally {
+    pulling = false
   }
 }
 
@@ -417,39 +352,6 @@ async function latest() {
 }
 
 
-.search {
-  padding-top: 5px;
-  padding-bottom: 5px;
-}
-
-.select {
-  position: absolute;
-  width: 40px;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.search-type {
-  display: flex;
-  color: var(--el-text-color-regular);
-}
-
-:deep(.header-actions) {
-  padding-top: 8px;
-  padding-bottom: 8px;
-}
-
-.search-input {
-  width: 100%;
-  max-width: 280px;
-  height: 28px;
-
-  .setting-icon {
-    position: relative;
-    top: 3px;
-  }
-}
-
 .clear-email {
   display: flex;
   flex-direction: column;
@@ -466,64 +368,11 @@ async function latest() {
   }
 }
 
-.status-select {
-  margin-bottom: 2px;
-  width: 102px;
-
-  :deep(.el-select__wrapper) {
-    min-height: 28px;
-  }
-}
-
-.input-with-select {
-  max-width: 200px;
-  border-radius: 0 4px 4px 0;
-}
-
-:deep(.input-with-select .el-input-group__append) {
-  background-color: var(--el-fill-color-blank);
-}
-
-:deep(.el-select__wrapper) {
-  padding: 2px 10px;
-  min-height: 28px;
-}
-
 :deep(.el-date-editor.el-input__wrapper) {
   width: 303px;
 }
 
 .icon {
   cursor: pointer;
-}
-
-.clear {
-  @media (max-width: 419px) {
-    position: absolute;
-    top: 41px;
-    left: 242px;
-  }
-}
-
-:deep(.reload) {
-  @media (max-width: 419px) {
-    position: absolute;
-    top: 42px;
-    left: 208px;
-  }
-}
-
-:deep(.delete) {
-  @media (max-width: 456px) {
-    position: absolute;
-    top: 43px;
-    left: 294px;
-  }
-
-  @media (max-width: 419px) {
-    position: absolute;
-    top: 43px;
-    left: 282px;
-  }
 }
 </style>

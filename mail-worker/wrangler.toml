@@ -23,6 +23,10 @@ enabled = true
 #[[send_email]]
 #name = "email"			#CF发件, 配置后优先使用
 
+# 上游 cloud-mail v3.4.x：站内互发的邮件按转发规则转发到已验证的外部邮箱(不限单个地址)
+[[send_email]]
+name = "forward"
+
 [ai]
 binding = "ai"
 
@@ -34,6 +38,15 @@ run_worker_first = true
 
 [triggers]
 crons = ["0 * * * *"]	#每小时执行；resetDaySendCount 仅在 UTC 0 点生效
+
+# 上游 cloud-mail v3.6：网页端实时新邮件推送(WebSocket)。SQLite Durable Object，免费套餐可用。
+[[durable_objects.bindings]]
+name = "ws"
+class_name = "MailHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MailHub"]
 
 
 [vars]
@@ -48,6 +61,7 @@ crons = ["0 * * * *"]	#每小时执行；resetDaySendCount 仅在 UTC 0 点生�
 #orm_log = false			#是否sql日志
 #domain = []				#邮件域名可可配置多个 示例: ["example1.com","example2.com"]
 #admin = ""				#管理员的邮箱	示例: admin@example.com
+# password 请用 `wrangler secret put password` 设置：执行 /init 时若管理员尚未注册则自动创建
 #cors_origins = "https://mail.example.com" # 允许跨域的前端来源，多个使用逗号分隔
 #oauth_state_required = true
 #allow_unsigned_resend_webhook = false

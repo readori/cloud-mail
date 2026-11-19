@@ -163,6 +163,7 @@ jobs:
       CONFIG_ENCRYPTION_KEY_PREVIOUS: ${{ secrets.CONFIG_ENCRYPTION_KEY_PREVIOUS }}
       RESEND_WEBHOOK_SECRET: ${{ secrets.RESEND_WEBHOOK_SECRET }}
       LINUXDO_CLIENT_SECRET: ${{ secrets.LINUXDO_CLIENT_SECRET }}
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD || secrets.PASSWORD }}
 
     steps:
       - name: Checkout current repository
@@ -380,6 +381,19 @@ jobs:
               '[triggers]',
               'crons = ["0 16 * * *"]',
               '',
+              # Upstream cloud-mail v3.6 realtime mail push (WebSocket hub, SQLite Durable Object).
+              '[[durable_objects.bindings]]',
+              'name = "ws"',
+              'class_name = "MailHub"',
+              '',
+              '[[migrations]]',
+              'tag = "v1"',
+              'new_sqlite_classes = ["MailHub"]',
+              '',
+              # Upstream cloud-mail v3.4.x: forward on-site mail to verified external addresses.
+              '[[send_email]]',
+              'name = "forward"',
+              '',
           ]
 
           if as_bool('CLOUDFLARE_EMAIL'):
@@ -431,6 +445,8 @@ jobs:
               'config_encryption_key_previous': os.environ.get('CONFIG_ENCRYPTION_KEY_PREVIOUS', ''),
               'resend_webhook_secret': os.environ.get('RESEND_WEBHOOK_SECRET', ''),
               'linuxdo_client_secret': os.environ.get('LINUXDO_CLIENT_SECRET', ''),
+              # Upstream cloud-mail v3.6: /init creates the admin user when it does not exist yet.
+              'password': os.environ.get('ADMIN_PASSWORD', ''),
           }
           payload.update({key: value for key, value in optional.items() if value})
 

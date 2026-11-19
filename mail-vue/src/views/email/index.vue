@@ -11,6 +11,7 @@
                :highlight-text="emailStore.searchParams.text"
                actionLeft="4px"
                @jump="jumpContent"
+               @refresh-success="onRefreshSuccess"
   >
   </emailScroll>
 </template>
@@ -26,6 +27,7 @@ import {defineOptions, h, onMounted, onUnmounted, reactive, ref, watch} from "vu
 import {sleep} from "@/utils/time-utils.js";
 import router from "@/router/index.js";
 import { useRoute } from 'vue-router'
+import {inboxWs, isAutoRefreshEnabled} from "@/websocket/client.js";
 
 defineOptions({
   name: 'email'
@@ -38,8 +40,41 @@ const settingStore = useSettingStore();
 const scroll = ref({})
 onMounted(() => {
   emailStore.emailScroll = scroll;
+  // 上游 v3.6：收件箱实时推送。连接期间靠推送补拉新邮件，断开时按自动刷新间隔轮询兜底。
+  inboxWs.start({
+    isEnabled: () => isAutoRefreshEnabled(settingStore.settings.autoRefresh),
+    onMessage: onWsMessage,
+    onReconnect: () => schedulePullLatest(),
+  })
   latest()
 })
+
+watch(() => settingStore.settings.autoRefresh, () => {
+  inboxWs.sync()
+})
+
+function onRefreshSuccess() {
+  inboxWs.retryNow()
+}
+
+// 推送到达：非「全部收取」时忽略其它账号的信。
+function onWsMessage(event) {
+  const allReceive = accountStore.currentAccount.allReceive
+  if (!allReceive && event?.accountId != null && Number(event.accountId) !== Number(accountStore.currentAccountId)) {
+    return
+  }
+  schedulePullLatest()
+}
+
+// 短时间内多条推送合并成一次补拉。
+let pullTimer = null
+function schedulePullLatest() {
+  if (pullTimer) window.clearTimeout(pullTimer)
+  pullTimer = window.setTimeout(() => {
+    pullTimer = null
+    void pullLatest()
+  }, 150)
+}
 
 
 watch(() => accountStore.currentAccountId, () => {
@@ -69,26 +104,46 @@ const existIds = new Set();
 let pollingStopped = false
 onUnmounted(() => {
   pollingStopped = true
+  if (pullTimer) {
+    window.clearTimeout(pullTimer)
+    pullTimer = null
+  }
+  inboxWs.stop()
 })
 
+// 实时推送未连上时(不支持、被拒绝或断线重连中)按自动刷新间隔轮询。
 async function latest() {
   while (!pollingStopped) {
 
     let autoRefresh = settingStore.settings.autoRefresh;
     await sleep(autoRefresh > 1 ? autoRefresh * 1000 : 3000);
 
-    if (pollingStopped || !scroll.value || route.name !== 'email') {
+    if (pollingStopped || inboxWs.isConnected() || autoRefresh <= 1) {
       continue;
+    }
+    await pullLatest()
+  }
+}
+
+let pulling = false
+async function pullLatest() {
+    if (pulling) {
+      schedulePullLatest()
+      return
+    }
+    if (pollingStopped || !scroll.value || route.name !== 'email') {
+      return;
     }
 
     const searchParams = emailStore.searchParams
     if (searchParams.text || searchParams.startDate || searchParams.endDate) {
-      continue
+      return
     }
 
     const latestId = scroll.value.latestEmail?.emailId
 
-    if (!scroll.value.firstLoad && autoRefresh > 1) {
+    if (!scroll.value.firstLoad) {
+      pulling = true
       try {
         const accountId = accountStore.currentAccountId
         const allReceive = scroll.value.latestEmail?.allReceive
@@ -127,9 +182,10 @@ async function latest() {
           settingStore.settings.autoRefresh = 0;
         }
         console.error(e)
+      } finally {
+        pulling = false
       }
     }
-  }
 }
 
 function addStar(email) {

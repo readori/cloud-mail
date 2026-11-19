@@ -12,6 +12,7 @@ import settingService from './setting-service';
 import BizError from '../error/biz-error';
 import { sanitizeEmailHtml } from '../utils/html-utils';
 import { toId } from '../utils/input-utils';
+import { ATT_CACHE_CONTROL, isDangerousAttType, isSafeInlineAtt } from '../utils/att-headers';
 
 const MAX_ATTACHMENT_COUNT = 10;
 const MAX_INLINE_COUNT = 10;
@@ -30,6 +31,28 @@ function cleanFilename(value) {
 
 function contentDisposition(type, filename) {
 	return `${type}; filename*=UTF-8''${encodeURIComponent(cleanFilename(filename))}`;
+}
+
+// 上游 v3.6 附件 XSS 防护：SVG/HTML/XML/脚本类型一律按二进制保存；只有栅格图片允许 inline。
+// 对象存储若配置了公开域名直接访问，元数据本身也必须是安全的。
+function storedContentType(mimeType) {
+	const type = String(mimeType || 'application/octet-stream').slice(0, 255);
+	return isDangerousAttType(type) ? 'application/octet-stream' : type;
+}
+
+function storedDisposition(wantInline, mimeType, filename) {
+	return contentDisposition(wantInline && isSafeInlineAtt(mimeType) ? 'inline' : 'attachment', filename);
+}
+
+// TinyMCE 可能把站内图片路径改写成 /attachments/... 或 ../attachments/...，统一收成存储 key。
+function fromAttSrc(src) {
+	const value = String(src || '');
+	const index = value.indexOf(constant.ATTACHMENT_PREFIX);
+	if (index === -1) return null;
+	const prefix = value.slice(0, index);
+	if (prefix && !/^(?:\.\.\/|\.\/|\/)+$/.test(prefix)) return null;
+	const key = value.slice(index).split(/[?#]/)[0];
+	return key.split('/').includes('..') ? null : key;
 }
 
 function byteLength(content) {
@@ -84,9 +107,9 @@ const attService = {
 				const filename = cleanFilename(source.filename);
 				const inline = !!source.contentId;
 				await r2Service.putObj(c, source.key, source.content, {
-					contentType: String(source.mimeType || 'application/octet-stream').slice(0, 255),
-					contentDisposition: contentDisposition(inline ? 'inline' : 'attachment', filename),
-					...(inline ? { cacheControl: 'max-age=259200' } : {})
+					contentType: storedContentType(source.mimeType),
+					contentDisposition: storedDisposition(inline, source.mimeType, filename),
+					...(inline ? { cacheControl: ATT_CACHE_CONTROL } : {})
 				});
 				storedKeys.push(source.key);
 				const { content, buff, ...row } = source;
@@ -136,8 +159,8 @@ const attService = {
 				const key = constant.ATTACHMENT_PREFIX + await fileUtils.getBuffHash(buffer) + fileUtils.getExtFileName(filename);
 				img.setAttribute('src', `cid:${contentId}`);
 				imageDataList.push({ key, filename, mimeType: file.type, size: file.size, buff: buffer, content: fileUtils.base64ToDataStr(src), contentId });
-			} else if (src && ((objectDomain && src.startsWith(`${objectDomain}/`)) || src.startsWith(constant.ATTACHMENT_PREFIX))) {
-				const key = src.startsWith(constant.ATTACHMENT_PREFIX) ? src : src.replace(`${objectDomain}/`, '');
+			} else if (src && ((objectDomain && src.startsWith(`${objectDomain}/`)) || fromAttSrc(src))) {
+				const key = objectDomain && src.startsWith(`${objectDomain}/`) ? src.replace(`${objectDomain}/`, '') : fromAttSrc(src);
 				if (!key.startsWith(constant.ATTACHMENT_PREFIX)) {
 					img.removeAttribute('src');
 					continue;
@@ -186,7 +209,7 @@ const attService = {
 			const key = constant.ATTACHMENT_PREFIX + await fileUtils.getBuffHash(buffer) + fileUtils.getExtFileName(filename);
 			const mimeType = String(source.type || source.contentType || 'application/octet-stream').slice(0, 255);
 			await r2Service.putObj(c, key, buffer, {
-				contentType: mimeType,
+				contentType: storedContentType(mimeType),
 				contentDisposition: contentDisposition('attachment', filename)
 			});
 			rows.push({ userId, accountId, emailId, key, size: buffer.length, filename, mimeType, type: attConst.type.ATT });
@@ -203,9 +226,9 @@ const attService = {
 			if (!content) continue;
 			const filename = cleanFilename(source.filename);
 			await r2Service.putObj(c, source.key, content, {
-				contentType: source.mimeType || 'application/octet-stream',
-				cacheControl: 'max-age=259200',
-				contentDisposition: contentDisposition('inline', filename)
+				contentType: storedContentType(source.mimeType),
+				cacheControl: ATT_CACHE_CONTROL,
+				contentDisposition: storedDisposition(true, source.mimeType, filename)
 			});
 			rows.push({
 				userId, emailId, accountId, key: source.key, filename,

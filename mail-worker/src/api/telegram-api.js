@@ -6,7 +6,7 @@ app.get('/telegram/getEmail/:token', async (c) => {
 	c.header('Cache-Control', 'private, max-age=300');
 	c.header('Referrer-Policy', 'no-referrer');
 	c.header('X-Frame-Options', 'SAMEORIGIN');
-	c.header('Content-Security-Policy', "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; font-src https: data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'");
+	c.header('Content-Security-Policy', "default-src 'none'; img-src 'self' https: data:; style-src 'unsafe-inline'; font-src https: data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'");
 	return c.html(content)
 });
 

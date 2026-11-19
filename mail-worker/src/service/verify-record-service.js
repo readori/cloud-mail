@@ -46,6 +46,20 @@ const verifyRecordService = {
 		return Number(row?.count || 0) >= Number(addVerifyCount || 0);
 	},
 
+	// 上游 v3.6 登录验证码(按次数)：原子地占用一次免验证登录额度，并发请求共享同一上限。
+	async consumeLoginAttempt(c, limit) {
+		const row = await c.env.db.prepare(`
+			INSERT INTO verify_record (ip, count, type, update_time)
+			VALUES (?, 1, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(ip, type) DO UPDATE SET
+				count = verify_record.count + 1,
+				update_time = CURRENT_TIMESTAMP
+			WHERE verify_record.count < ?
+			RETURNING count
+		`).bind(identity(c), verifyRecordType.LOGIN, Math.max(1, Number(limit) || 1)).first();
+		return !!row;
+	},
+
 	async increaseRegCount(c) { return increase(c, verifyRecordType.REG); },
 	async increaseAddCount(c) { return increase(c, verifyRecordType.ADD); }
 };

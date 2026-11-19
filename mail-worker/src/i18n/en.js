@@ -33,6 +33,7 @@ const en = {
 	resendRecipientLimit: 'Resend separate sending supports at most 100 recipients',
 	resendSeparateAttachments: 'Resend separate sending does not support attachments',
 	separateNoCc: 'Separate sending does not support CC or BCC',
+	recipientLimit: 'To, CC, and BCC together cannot exceed 50 recipients',
 	pwdLengthLimit: 'Password length exceeds the limit',
 	emailLengthLimit: 'Email length exceeds the limit',
 	minEmailPrefix: 'Email must be at least {{msg}} characters',

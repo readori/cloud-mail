@@ -1,7 +1,7 @@
 import KvConst from '../const/kv-const';
 import setting from '../entity/setting';
 import orm from '../entity/orm';
-import { verifyRecordType } from '../const/entity-const';
+import { settingConst, verifyRecordType } from '../const/entity-const';
 import fileUtils from '../utils/file-utils';
 import r2Service from './r2-service';
 import { getAuthToken } from '../security/auth-session';
@@ -24,7 +24,7 @@ import {
 
 const PERSISTED_KEYS = new Set([
 	'register', 'receive', 'title', 'manyEmail', 'addEmail', 'autoRefresh', 'addEmailVerify',
-	'registerVerify', 'regVerifyCount', 'addVerifyCount', 'send', 'r2Domain', 'secretKey',
+	'registerVerify', 'regVerifyCount', 'addVerifyCount', 'loginVerify', 'loginVerifyCount', 'send', 'r2Domain', 'secretKey',
 	'siteKey', 'regKey', 'background', 'tgBotToken', 'tgChatId', 'tgBotStatus', 'forwardEmail',
 	'forwardStatus', 'ruleEmail', 'ruleType', 'loginOpacity', 'resendTokens', 'noticeTitle',
 	'noticeContent', 'noticeType', 'noticeDuration', 'noticePosition', 'noticeOffset', 'noticeWidth',
@@ -41,7 +41,7 @@ const BINARY_KEYS = new Set([
 	'ruleType', 'notice', 'noRecipient', 'loginDomain', 'forcePathStyle', 'aiCode',
 	'linuxdoSwitch', 'githubSwitch', 'googleSwitch', 'webhookStatus'
 ]);
-const TRISTATE_KEYS = new Set(['addEmailVerify', 'registerVerify', 'regKey']);
+const TRISTATE_KEYS = new Set(['addEmailVerify', 'registerVerify', 'loginVerify', 'regKey']);
 // resendTokens 单独处理(按域名脱敏)，其余敏感字段统一加密存储并脱敏返回
 const SECRET_KEYS = new Set(configuredSecretFields().filter(key => key !== 'resendTokens'));
 const LIST_TEXT_KEYS = new Set([
@@ -65,7 +65,10 @@ const UPSTREAM_SETTING_COLUMNS = [
 	`ALTER TABLE setting ADD COLUMN webhook_url TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE setting ADD COLUMN webhook_status INTEGER NOT NULL DEFAULT 1`,
 	`ALTER TABLE setting ADD COLUMN webhook_retry INTEGER NOT NULL DEFAULT 0`,
-	`ALTER TABLE setting ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''`
+	`ALTER TABLE setting ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''`,
+	// 上游 v3.6：登录人机验证(1 关闭，0 开启，2 按次数)
+	`ALTER TABLE setting ADD COLUMN login_verify INTEGER NOT NULL DEFAULT 1`,
+	`ALTER TABLE setting ADD COLUMN login_verify_count INTEGER NOT NULL DEFAULT 1`
 ];
 
 const UPSTREAM_SETTING_COLUMN_NAMES = UPSTREAM_SETTING_COLUMNS.map(statement => /ADD COLUMN (\w+)/.exec(statement)[1]);
@@ -75,7 +78,8 @@ const SETTING_DEFAULTS = {
 	githubClientId: '', githubClientSecret: '', githubSwitch: 1,
 	googleClientId: '', googleClientSecret: '', googleSwitch: 1,
 	autoCleanDays: 0, autoCleanExclude: '',
-	webhookUrl: '', webhookStatus: 1, webhookRetry: 0, webhookSecret: ''
+	webhookUrl: '', webhookStatus: 1, webhookRetry: 0, webhookSecret: '',
+	loginVerify: settingConst.loginVerify.CLOSE, loginVerifyCount: 1
 };
 
 const TEXT_LIMITS = {
@@ -189,7 +193,7 @@ function normalizeSettingValue(key, value) {
 	if (BINARY_KEYS.has(key)) return toInteger(value, { name: key, required: true, min: 0, max: 1 });
 	if (TRISTATE_KEYS.has(key)) return toInteger(value, { name: key, required: true, min: 0, max: 2 });
 	if (key === 'autoRefresh') return assertEnum(toInteger(value, { name: key, required: true, min: 0, max: 60 }), [0, 3, 5, 10, 15, 20], { name: key });
-	if (key === 'regVerifyCount' || key === 'addVerifyCount') return toInteger(value, { name: key, required: true, min: 1, max: 100_000 });
+	if (key === 'regVerifyCount' || key === 'addVerifyCount' || key === 'loginVerifyCount') return toInteger(value, { name: key, required: true, min: 1, max: 100_000 });
 	if (key === 'minEmailPrefix') return toInteger(value, { name: key, required: true, min: 1, max: 20 });
 	if (key === 'noticeDuration') return toInteger(value, { name: key, required: true, min: 0, max: 86_400_000 });
 	if (key === 'noticeOffset') return toInteger(value, { name: key, required: true, min: -10_000, max: 10_000 });
@@ -313,9 +317,11 @@ const settingService = {
 		row.hasCfEmail = !!c.env.email;
 		row.regVerifyOpen = false;
 		row.addVerifyOpen = false;
+		row.loginVerifyOpen = false;
 		for (const record of Array.isArray(recordList) ? recordList : []) {
 			if (record.type === verifyRecordType.REG) row.regVerifyOpen = Number(record.count) >= Number(row.regVerifyCount);
 			if (record.type === verifyRecordType.ADD) row.addVerifyOpen = Number(record.count) >= Number(row.addVerifyCount);
+			if (record.type === verifyRecordType.LOGIN) row.loginVerifyOpen = Number(record.count) >= Number(row.loginVerifyCount);
 		}
 		row.storageType = await r2Service.storageType(c);
 		return row;
@@ -415,6 +421,7 @@ const settingService = {
 			autoRefresh: row.autoRefresh,
 			addEmailVerify: row.addEmailVerify,
 			registerVerify: row.registerVerify,
+			loginVerify: row.loginVerify,
 			send: row.send,
 			r2Domain: row.r2Domain,
 			siteKey: row.siteKey,
@@ -424,6 +431,7 @@ const settingService = {
 			regKey: row.regKey,
 			regVerifyOpen: row.regVerifyOpen,
 			addVerifyOpen: row.addVerifyOpen,
+			loginVerifyOpen: row.loginVerifyOpen,
 			noticeTitle: row.noticeTitle,
 			noticeContent: row.noticeContent,
 			noticeType: row.noticeType,

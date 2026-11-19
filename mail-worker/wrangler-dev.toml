@@ -34,6 +34,18 @@ run_worker_first = true
 #[[send_email]]
 #name = "email"
 
+[[send_email]]
+name = "forward"
+
+# 上游 cloud-mail v3.6：网页端实时新邮件推送(WebSocket)。SQLite Durable Object，免费套餐可用。
+[[durable_objects.bindings]]
+name = "ws"
+class_name = "MailHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MailHub"]
+
 
 [vars]
 # CF Mail iOS remote push: point at the independent Push Gateway; leave unset/blank to disable.
