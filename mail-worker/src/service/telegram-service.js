@@ -60,8 +60,17 @@ async function objectToUint8Array(object) {
 	return null;
 }
 
-async function loadStoredAttachments(c, emailId) {
-	const rows = await attService.selectByEmailIds(c, [emailId]);
+// Images embedded in the HTML body (cid: references rewritten to their stored key on receive)
+// are part of the message layout, not files the user attached. Sending each one as a separate
+// Telegram document turned a single newsletter into many messages.
+export function isEmbeddedBodyImage(row, html) {
+	return Boolean(row?.contentId && row?.key && String(html || '').includes(row.key));
+}
+
+async function loadStoredAttachments(c, emailRow) {
+	const emailId = emailRow.emailId;
+	const rows = (await attService.selectByEmailIds(c, [emailId]))
+		.filter(row => !isEmbeddedBodyImage(row, emailRow.content));
 	const result = [];
 	for (const row of rows) {
 		try {
@@ -141,10 +150,11 @@ const telegramService = {
 		// Telegram web_app buttons are private-chat-only. A normal HTTPS URL button works
 		// for private chats, groups and channels, including negative chat IDs.
 		const replyMarkup = buildTelegramInlineKeyboard(viewUrl, emailRow.code);
-		const messageTexts = buildTelegramEmailMessages(emailRow, tgMsgTo, tgMsgFrom, tgMsgText);
+		const hasViewLink = Boolean(replyMarkup?.inline_keyboard?.some(row => row.some(button => button.url)));
+		const messageTexts = buildTelegramEmailMessages(emailRow, tgMsgTo, tgMsgFrom, tgMsgText, { hasViewLink });
 		let attachments = [];
 		try {
-			attachments = await loadStoredAttachments(c, emailRow.emailId);
+			attachments = await loadStoredAttachments(c, emailRow);
 		} catch (error) {
 			// Attachment storage/read failures must not suppress the Telegram text notification.
 			console.error(`Telegram 附件列表读取失败 emailId=${emailRow.emailId}:`, error?.message || error);

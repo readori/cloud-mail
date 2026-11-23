@@ -17,6 +17,8 @@ export function buildTelegramInlineKeyboard(viewUrl, copyText = '') {
 
 export function telegramPlainText(html) {
 	return String(html || '')
+		// Links fall back to their label only: raw tracking URLs are what made forwards unreadable.
+		.replace(/<a\s[^>]*>([\s\S]*?)<\/a>/gi, '$1')
 		.replace(/<\/?(?:b|strong|i|em|code|pre)>/gi, '')
 		.replace(/&lt;/g, '<')
 		.replace(/&gt;/g, '>')

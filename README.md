@@ -48,6 +48,7 @@ Useful links:
 - **Forwarding** — on-site mail between local users is now pushed and forwarded (Telegram, webhook, and the `forward` Email Routing binding). Forwarding rules match either the user's login address or the recipient address, and webhooks follow the same rules.
 - **All-mail search** — admins can search all mail by user, account, sender, recipient, subject, or body, and filter by date.
 - **Hardening** — attachment responses are served with XSS-safe content types and dispositions, outbound messages are limited to 50 recipients, and non-Chinese clients receive English messages.
+- **Compact Telegram forwarding** — each mail arrives as one message (up to three without a *View* button): links show as clickable labels instead of raw tracking URLs, images and hidden preheaders are dropped, and images embedded in the body are no longer sent as separate files.
 - **Admin bootstrap** — set the optional `ADMIN_PASSWORD` secret and `/init` creates the `ADMIN` account if it does not exist yet.
 
 **Upgrading:** run the deployment workflow once with `deploy-and-migrate`. It adds the new `login_verify` setting columns and an index, and the rendered Wrangler config now includes the `ws` Durable Object binding (with its `v1` migration) and the `forward` `send_email` binding.
