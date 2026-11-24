@@ -124,7 +124,7 @@ function htmlToTokens(html) {
 
 	const walk = (node) => {
 		if (node.nodeType === 3) {
-			tokens.push({ t: 'text', v: node.textContent || '' });
+			tokens.push({ t: 'raw', v: node.textContent || '' });
 			return;
 		}
 		if (node.nodeType !== 1) return;
@@ -151,37 +151,62 @@ function htmlToTokens(html) {
 	};
 
 	walk(document.body || document.documentElement);
-	return tokens;
+
+	// Many senders also print URLs as plain text ("Support<https://…>"). The parser may split
+	// such text at entities or inline tags, so linkify each run of adjacent text as a whole.
+	const result = [];
+	let run = '';
+	const flush = () => {
+		if (run) result.push(...linkifyText(run));
+		run = '';
+	};
+	for (const token of tokens) {
+		if (token.t === 'raw') {
+			run += token.v;
+			continue;
+		}
+		flush();
+		result.push(token);
+	}
+	flush();
+	return result;
 }
 
 // Plain-text parts from newsletter tools render links as "Label (https://…)" or "<https://…>"
 // and images as "[image: alt]". Turn URLs into short clickable links.
 const PLAIN_URL = /[(<\[]\s*(https?:\/\/[^\s<>()\[\]]+)\s*[)>\]]|(https?:\/\/[^\s<>()\[\]]+)/gi;
 
+/** Shorten URLs written as text ("Support<https://…>", "Label (https://…)", bare links). */
+function linkifyText(line) {
+	const tokens = [];
+	let last = 0;
+	for (const match of line.matchAll(PLAIN_URL)) {
+		const before = line.slice(last, match.index);
+		last = match.index + match[0].length;
+		const href = (match[1] || match[2] || '').replace(/[.,;:!?'"]+$/, '');
+		const trailing = (match[2] || '').slice(href.length);
+		if (match[1] && before.trim()) {
+			// "Label (url)": make a short arrow link right after the label.
+			tokens.push({ t: 'text', v: before.replace(/\s+$/, '') + ' ' });
+			const token = linkToken(href, '↗');
+			if (token) tokens.push(token.t === 'link' ? { ...token, v: '↗' } : token);
+		} else {
+			if (before) tokens.push({ t: 'text', v: before });
+			const token = linkToken(href, '');
+			if (token) tokens.push(token);
+		}
+		if (trailing) tokens.push({ t: 'text', v: trailing });
+	}
+	if (last < line.length) tokens.push({ t: 'text', v: line.slice(last) });
+	return tokens;
+}
+
 function textToTokens(text) {
 	const tokens = [];
 	const cleaned = String(text || '').replace(/\[(?:image|cid):[^\]]*\]/gi, '');
 	for (const [index, line] of cleaned.split(/\r?\n/).entries()) {
 		if (index > 0) tokens.push({ t: 'nl' });
-		let last = 0;
-		for (const match of line.matchAll(PLAIN_URL)) {
-			const before = line.slice(last, match.index);
-			last = match.index + match[0].length;
-			const href = (match[1] || match[2] || '').replace(/[.,;:!?'"]+$/, '');
-			const trailing = (match[2] || '').slice(href.length);
-			if (match[1] && before.trim()) {
-				// "Label (url)": make a short arrow link right after the label.
-				tokens.push({ t: 'text', v: before.replace(/\s+$/, '') + ' ' });
-				const token = linkToken(href, '↗');
-				if (token) tokens.push(token.t === 'link' ? { ...token, v: '↗' } : token);
-			} else {
-				if (before) tokens.push({ t: 'text', v: before });
-				const token = linkToken(href, '');
-				if (token) tokens.push(token);
-			}
-			if (trailing) tokens.push({ t: 'text', v: trailing });
-		}
-		if (last < line.length) tokens.push({ t: 'text', v: line.slice(last) });
+		tokens.push(...linkifyText(line));
 	}
 	return tokens;
 }

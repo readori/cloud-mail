@@ -75,6 +75,16 @@ describe('Telegram email message', () => {
 		expect(visible(message)).not.toMatch(/https?:\/\//);
 	});
 
+	it('shortens URLs printed as text inside an HTML body', () => {
+		const support = 'https://engagecenter.microsoft.com/#view/Microsoft_AzureCXP_EngageHub/EngageHubMenu.MenuView/targetExperience/sfb/sapId/bc9d4067';
+		const content = `<p>Your OTP: 297324</p><p>Need assistance? Contact Support&lt;${support}&gt;</p><p>Docs: https://learn.microsoft.com/a</p>`;
+		const [message] = buildTelegramEmailMessages({ ...base, content }, 'hide', 'hide', 'show', { hasViewLink: true });
+		expect(message).toContain(`Contact Support <a href="${support}">↗</a>`);
+		expect(message).toContain('Docs: <a href="https://learn.microsoft.com/a">learn.microsoft.com</a>');
+		expect(visible(message)).not.toMatch(/https?:\/\//);
+		expect(message).toContain('297324');
+	});
+
 	it('plain-text fallback keeps link labels, not URLs', () => {
 		expect(telegramPlainText(`<b>S</b>\n<a href="${TRACK}">Read more</a> &amp; <i>x</i>`)).toBe('S\nRead more & x');
 	});
