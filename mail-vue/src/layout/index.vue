@@ -35,6 +35,7 @@ import {useUiStore} from "@/store/ui.js";
 import writer from '@/layout/write/index.vue'
 import {Icon} from "@iconify/vue";
 import {impersonateStop} from "@/request/impersonate.js";
+import {diag} from "@/diagnostics/logger.js";
 import {ElMessage} from "element-plus";
 import {useI18n} from 'vue-i18n';
 
@@ -46,9 +47,12 @@ async function returnToAdmin() {
   if (stopping.value) return;
   stopping.value = true;
   try {
+    diag.info('impersonate', 'stop requested');
     await impersonateStop();
+    diag.info('impersonate', 'stop ok, reloading');
     window.location.reload();
   } catch (e) {
+    diag.error('impersonate', 'stop failed', { message: e && (e.message || (e.response && e.response.data && e.response.data.message)) });
     stopping.value = false;
     ElMessage({ message: e?.response?.data?.message || e?.message || t('returnToAdminFailed'), type: 'error', plain: true });
   }

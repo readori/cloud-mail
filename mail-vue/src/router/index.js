@@ -4,6 +4,7 @@ import {useUiStore} from "@/store/ui.js";
 import {useSettingStore} from "@/store/setting.js";
 import {cvtR2Url} from "@/utils/convert.js";
 import { isAuthenticated } from "@/auth/session.js";
+import { diag } from "@/diagnostics/logger.js";
 
 const routes = [
     {
@@ -156,7 +157,9 @@ function loadBackground(next) {
 
 }
 
-router.afterEach((to) => {
+router.afterEach((to, from) => {
+
+    try { diag.info('route', `${from && from.fullPath || ''} -> ${to.fullPath}`, { name: to.name }) } catch (e) { /* ignore */ }
 
     clearTimeout(timer)
     if (first) {

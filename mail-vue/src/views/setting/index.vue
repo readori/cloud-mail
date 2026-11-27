@@ -69,7 +69,34 @@
         <el-button type="primary" @click="deleteConfirm">{{$t('deleteUserBtn')}}</el-button>
       </div>
     </div>
-    <el-dialog v-model="pwdShow" :title="$t('changePassword')" width="340">
+    <div class="preference-item">
+      <div class="title">{{$t('diagnostics')}}</div>
+      <div class="language-row setting-row">
+        <div>{{$t('diagnosticsInfo')}}</div>
+        <div>
+          <el-button @click="openDiag">{{$t('diagView')}}</el-button>
+        </div>
+      </div>
+    </div>
+    <el-dialog v-model="diagShow" :title="$t('diagnostics')" width="720" class="diag-dialog" @open="refreshDiag">
+      <div class="diag-toolbar">
+        <span class="diag-count">{{ diagEntries.length }}</span>
+        <el-button size="small" @click="copyDiag">{{$t('diagCopy')}}</el-button>
+        <el-button size="small" @click="downloadDiag">{{$t('diagDownload')}}</el-button>
+        <el-button size="small" @click="refreshDiag">{{$t('diagRefresh')}}</el-button>
+        <el-button size="small" type="danger" plain @click="clearDiag">{{$t('diagClear')}}</el-button>
+      </div>
+      <el-scrollbar height="52vh" class="diag-list">
+        <div v-for="e in diagEntriesReversed" :key="e.id" class="diag-entry" :class="'lvl-' + e.level">
+          <span class="diag-time">{{ (e.t || '').slice(11, 23) }}</span>
+          <span class="diag-cat">{{ e.category }}</span>
+          <span class="diag-msg">{{ e.message }}</span>
+          <span class="diag-extra" v-if="extraOf(e)">{{ extraOf(e) }}</span>
+        </div>
+        <div v-if="diagEntries.length === 0" class="diag-empty">{{$t('diagEmpty')}}</div>
+      </el-scrollbar>
+    </el-dialog>
+        <el-dialog v-model="pwdShow" :title="$t('changePassword')" width="340">
       <div class="update-pwd">
         <el-input type="password" :placeholder="$t('newPassword')" v-model="form.password" autocomplete="off"/>
         <el-input type="password" :placeholder="$t('confirmPassword')" v-model="form.newPwd" autocomplete="off"/>
@@ -92,6 +119,8 @@ import {useI18n} from "vue-i18n";
 import {useSettingStore} from "@/store/setting.js";
 import {useUiStore} from "@/store/ui.js";
 import ThemeSelector from "@/components/theme-selector/index.vue";
+import { diag } from "@/diagnostics/logger.js";
+import { computed } from "vue";
 
 const { t } = useI18n()
 const accountStore = useAccountStore()
@@ -102,6 +131,57 @@ const setPwdLoading = ref(false)
 const setNameShow = ref(false)
 const accountName = ref(null)
 const langSelect = ref(settingStore.lang)
+
+// 诊断日志
+const diagShow = ref(false)
+const diagEntries = ref([])
+const diagEntriesReversed = computed(() => diagEntries.value.slice().reverse())
+const STD_KEYS = new Set(['id', 't', 'level', 'category', 'message'])
+
+function refreshDiag() {
+  diagEntries.value = diag.entries()
+}
+function openDiag() {
+  refreshDiag()
+  diagShow.value = true
+}
+function extraOf(e) {
+  const parts = []
+  for (const [k, v] of Object.entries(e)) {
+    if (STD_KEYS.has(k) || v === undefined || v === null || v === '') continue
+    parts.push(`${k}=${v}`)
+  }
+  return parts.join('  ')
+}
+async function copyDiag() {
+  try {
+    await navigator.clipboard.writeText(diag.exportText())
+    ElMessage({ message: t('diagCopied'), type: 'success', plain: true })
+  } catch (e) {
+    ElMessage({ message: t('diagCopyFailed'), type: 'error', plain: true })
+  }
+}
+function downloadDiag() {
+  try {
+    const blob = new Blob([diag.exportText()], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    a.href = url
+    a.download = `cloudmail-web-diagnostics-${stamp}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (e) {
+    ElMessage({ message: t('diagCopyFailed'), type: 'error', plain: true })
+  }
+}
+function clearDiag() {
+  diag.clear()
+  refreshDiag()
+  ElMessage({ message: t('diagCleared'), type: 'success', plain: true })
+}
 
 defineOptions({
   name: 'setting'
@@ -342,4 +422,41 @@ function submitPwd() {
     gap: 20px;
   }
 }
+
+.diag-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.diag-toolbar .diag-count {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.diag-list {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+}
+.diag-entry {
+  display: flex;
+  gap: 8px;
+  padding: 4px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  word-break: break-word;
+}
+.diag-entry .diag-time { color: var(--el-text-color-secondary); white-space: nowrap; }
+.diag-entry .diag-cat { color: var(--el-color-primary); white-space: nowrap; min-width: 64px; }
+.diag-entry .diag-msg { flex: 1; }
+.diag-entry .diag-extra { color: var(--el-text-color-secondary); }
+.diag-entry.lvl-warn { background: var(--el-color-warning-light-9); }
+.diag-entry.lvl-error { background: var(--el-color-error-light-9); }
+.diag-entry.lvl-error .diag-msg { color: var(--el-color-error); }
+.diag-empty { padding: 20px; text-align: center; color: var(--el-text-color-secondary); }
+
 </style>

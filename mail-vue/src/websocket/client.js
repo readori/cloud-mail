@@ -1,3 +1,4 @@
+import { diag } from '@/diagnostics/logger.js';
 // 收件箱 / 全部邮件的 WebSocket 实时推送客户端（上游 cloud-mail v3.6）。
 // 本分支网页端使用 HttpOnly Cookie 会话：同源 WebSocket 握手会自动带上 Cookie，URL 里不放 token。
 // 连接期间靠推送刷新列表；断开后指数退避重连（1s、2s、4s… 最长 30s），
@@ -98,6 +99,7 @@ export function createWsClient(scope) {
 		}
 
 		socket.onopen = () => {
+			diag.info('ws', 'open', { scope });
 			reconnectAttempt = 0;
 			connected = true;
 			sendHeartbeat();
@@ -116,6 +118,7 @@ export function createWsClient(scope) {
 				return;
 			}
 			if (payload?.type === 'error') {
+				diag.warn('ws', 'auth rejected (error payload)', { scope });
 				authRejected = true;
 				connected = false;
 				clearHeartbeat();
@@ -135,9 +138,11 @@ export function createWsClient(scope) {
 			socket = null;
 			connected = false;
 			if (event.code === CLOSE_UNAUTHORIZED || authRejected) {
+				diag.warn('ws', 'closed unauthorized; stop reconnect', { scope, code: event.code });
 				authRejected = true;
 				return;
 			}
+			diag.info('ws', 'closed; will reconnect', { scope, code: event.code });
 			scheduleReconnect();
 		};
 	}

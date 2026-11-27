@@ -447,6 +447,7 @@ import {
 } from '@/request/user.js'
 import {roleSelectUseCompat} from "@/request/role.js";
 import {impersonateStart} from "@/request/impersonate.js";
+import {diag} from "@/diagnostics/logger.js";
 import {Icon} from "@iconify/vue";
 import loading from "@/components/loading/index.vue";
 import {tzDayjs} from "@/utils/day.js";
@@ -695,9 +696,12 @@ function doImpersonate(row) {
     cancelButtonText: t('cancel'),
     type: 'warning'
   }).then(() => {
+    diag.info('impersonate', 'start requested', { userId: row.userId })
     impersonateStart(row.userId).then(() => {
+      diag.info('impersonate', 'start ok, reloading')
       window.location.reload()
     }).catch(e => {
+      diag.error('impersonate', 'start failed', { message: e && (e.message || (e.response && e.response.data && e.response.data.message)) })
       ElMessage({ message: e?.response?.data?.message || e?.message || t('impersonateFailed'), type: 'error', plain: true })
     })
   }).catch(() => {})
