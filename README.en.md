@@ -42,7 +42,7 @@ Useful links:
 ### 2026-11 · Cloudflare Email Service sending
 
 - **Cloudflare Email Service** — outbound mail can be sent through the Cloudflare `send_email` binding (Email Sending) as well as Resend.
-- **Provider selection** — administrators choose `auto`, `cloudflare`, or `resend` in the email sending settings. `auto` (the default) prefers Cloudflare and falls back to Resend only when the sender domain is not onboarded yet.
+- **Provider selection** — administrators choose `auto`, `cloudflare`, or `resend` in the email sending settings. `auto` (the default) prefers Cloudflare and, when a Resend token is configured for the sender domain, falls back to Resend whenever Cloudflare rejects the message (for example the domain is not onboarded yet or the plan restricts recipients).
 - **Error hints** — Cloudflare error codes such as `E_SENDER_NOT_VERIFIED` or `E_RECIPIENT_PLAN_RESTRICTED` are shown with a short note on what to fix.
 - **Admin test send** — send a test message from the admin settings to confirm which provider is active.
 - **Binding setup** — `mail-worker/wrangler.toml` declares the `email` send_email binding; the GitHub Actions deployment workflow declares it when the repository variable `CLOUDFLARE_EMAIL` is `true`.
@@ -201,7 +201,7 @@ Outbound mail can use Cloudflare Email Service (Email Sending) or Resend.
 Notes:
 
 - Sending to arbitrary recipients requires a Workers Paid plan.
-- `auto` falls back to Resend only for sender-domain configuration errors, and only when a Resend token is configured for that domain.
+- `auto` falls back to Resend only when a Resend token is configured for the sender domain, and only when Cloudflare rejected the message with an error code (any `E_*` code except `E_INTERNAL_SERVER_ERROR`). Errors without a code or internal errors never fall back, so a message is never sent twice.
 
 ## GitHub Actions CI and Cloudflare deployment
 

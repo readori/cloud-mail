@@ -89,7 +89,7 @@
 ### 2026-11 · Cloudflare Email Service 发信
 
 - **Cloudflare Email Service 发信**：外发邮件除 Resend 外，可通过 Cloudflare `send_email` 绑定(Email Sending)发送。
-- **发信服务选择**：管理员可在发信设置中选择 `auto`(自动)、`cloudflare` 或 `resend`。自动模式(默认)优先使用 Cloudflare，仅在发件域名尚未接入时回退 Resend。
+- **发信服务选择**：管理员可在发信设置中选择 `auto`(自动)、`cloudflare` 或 `resend`。自动模式(默认)优先使用 Cloudflare；发件域名配置了 Resend Token 时，Cloudflare 拒收(如域名尚未接入、套餐限制收件人)会自动回退 Resend。
 - **错误提示**：Cloudflare 错误码(如 `E_SENDER_NOT_VERIFIED`、`E_RECIPIENT_PLAN_RESTRICTED`)会附带简要的修复提示。
 - **管理员测试发信**：在管理后台发送测试邮件，确认当前生效的发信方式。
 - **发信绑定配置**：`mail-worker/wrangler.toml` 已声明 `email` send_email 绑定；使用 GitHub Actions 部署时，将仓库变量 `CLOUDFLARE_EMAIL` 设为 `true` 即会声明该绑定。
@@ -187,7 +187,7 @@ cloud-mail
 注意事项：
 
 - 发给任意收件人需要 Workers 付费版。
-- 自动模式仅在发件域名配置错误时回退 Resend，且需要该域名已配置 Resend Token。
+- 自动模式仅在该域名已配置 Resend Token、且 Cloudflare 以错误码拒收(除 `E_INTERNAL_SERVER_ERROR` 外的任意 `E_*` 错误码)时回退 Resend；无错误码或内部错误不回退，避免重复发信。
 
 ## 后端安全加固说明
 
