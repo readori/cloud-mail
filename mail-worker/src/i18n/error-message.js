@@ -136,6 +136,11 @@ export function localizeErrorMessage(c, input, status = 400) {
   if (exact) return exact;
   const pattern = englishPattern(message);
   if (pattern) return pattern;
+  // Cloudflare 发信错误：「中文说明 (E_CODE)[: 原始信息]」，说明部分查资源表翻译，保留错误码与原始信息。
+  const cf = message.match(/^(.*?)(?: \((E_[A-Z0-9_]+)\))?(?:: ([\s\S]*))?$/);
+  if (cf && (cf[2] || cf[3]) && RESOURCE_EN_EXACT.has(cf[1])) {
+    return `${RESOURCE_EN_EXACT.get(cf[1])}${cf[2] ? ` (${cf[2]})` : ''}${cf[3] ? `: ${cf[3]}` : ''}`;
+  }
   // Never leak a Chinese-only internal validation string into the English API contract.
   if (/[\u3400-\u9fff]/.test(message)) {
     return Number(status) >= 500 ? 'Service temporarily unavailable.' : 'Invalid request.';

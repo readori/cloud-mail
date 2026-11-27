@@ -19,3 +19,24 @@ export function ensureEmailSenderColumn(env) {
 	}
 	return emailSenderColumn;
 }
+
+// Cloudflare Email Service 发信：setting.send_provider(发信通道选择)。drizzle 查询设置时选择全部列，
+// 未执行 /init 与迁移的旧库缺这一列会导致设置读取报错，处理方式与 sender_email 相同。
+let sendProviderColumn = null;
+
+export function ensureSendProviderColumn(env) {
+	if (!env?.db) return Promise.resolve();
+	if (!sendProviderColumn) {
+		sendProviderColumn = (async () => {
+			const { results = [] } = await env.db.prepare('PRAGMA table_info(setting)').all();
+			if (!results.length || results.some(column => column.name === 'send_provider')) return;
+			await env.db.prepare(`ALTER TABLE setting ADD COLUMN send_provider TEXT NOT NULL DEFAULT 'auto'`).run();
+			console.warn('setting 表缺少 send_provider 字段，已自动补齐');
+		})().catch(error => {
+			if (/duplicate column/i.test(String(error?.message))) return;
+			sendProviderColumn = null;
+			console.warn(`自动补齐 setting.send_provider 失败：${error?.message || error}`);
+		});
+	}
+	return sendProviderColumn;
+}

@@ -12,6 +12,7 @@ import { t } from '../i18n/i18n';
 import verifyRecordService from './verify-record-service';
 import jwtUtils from '../utils/jwt-utils';
 import verifyUtils from '../utils/verify-utils';
+import { SEND_PROVIDERS, DEFAULT_SEND_PROVIDER, normalizeSendProvider } from './send-provider';
 import {
 	assertEnum,
 	isMaskedSecret,
@@ -33,7 +34,8 @@ const PERSISTED_KEYS = new Set([
 	'minEmailPrefix', 'emailPrefixFilter', 'blackSubject', 'blackContent', 'blackFrom', 'aiCode',
 	'aiCodeFilter', 'linuxdoClientId', 'linuxdoClientSecret', 'linuxdoSwitch', 'githubClientId',
 	'githubClientSecret', 'githubSwitch', 'googleClientId', 'googleClientSecret', 'googleSwitch',
-	'autoCleanDays', 'autoCleanExclude', 'webhookUrl', 'webhookStatus', 'webhookRetry', 'webhookSecret'
+	'autoCleanDays', 'autoCleanExclude', 'webhookUrl', 'webhookStatus', 'webhookRetry', 'webhookSecret',
+	'sendProvider'
 ]);
 
 const BINARY_KEYS = new Set([
@@ -79,7 +81,8 @@ const SETTING_DEFAULTS = {
 	googleClientId: '', googleClientSecret: '', googleSwitch: 1,
 	autoCleanDays: 0, autoCleanExclude: '',
 	webhookUrl: '', webhookStatus: 1, webhookRetry: 0, webhookSecret: '',
-	loginVerify: settingConst.loginVerify.CLOSE, loginVerifyCount: 1
+	loginVerify: settingConst.loginVerify.CLOSE, loginVerifyCount: 1,
+	sendProvider: DEFAULT_SEND_PROVIDER
 };
 
 const TEXT_LIMITS = {
@@ -147,6 +150,7 @@ function applyRuntimeFields(c, row) {
 	for (const [key, value] of Object.entries(SETTING_DEFAULTS)) {
 		if (row[key] === undefined || row[key] === null) row[key] = value;
 	}
+	row.sendProvider = normalizeSendProvider(row.sendProvider);
 	row.domainList = parseDomains(c).map(item => `@${item}`);
 	// 上游 v3.4 移除「对象存储访问域名」：附件/图片统一经本站 /attachments、/static 代理访问
 	row.r2Domain = '';
@@ -209,6 +213,7 @@ function normalizeSettingValue(key, value) {
 	if (key === 'r2Domain') return normalizeConfigUrl(value, { name: 'R2访问域名', allowHttp: false });
 	if (key === 'customDomain') return normalizeConfigUrl(value, { name: '自定义域名', allowHttp: false });
 	if (key === 'endpoint') return normalizeConfigUrl(value, { name: 'S3 Endpoint', allowHttp: true });
+	if (key === 'sendProvider') return assertEnum(typeof value === 'string' ? value.trim() : value, SEND_PROVIDERS, { name: key });
 	if (key === 'tgMsgFrom') return assertEnum(value, ['show', 'hide', 'only-name'], { name: key });
 	if (key === 'tgMsgTo' || key === 'tgMsgText') return assertEnum(value, ['show', 'hide'], { name: key });
 	if (LIST_TEXT_KEYS.has(key)) {

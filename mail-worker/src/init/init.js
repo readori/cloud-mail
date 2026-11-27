@@ -53,6 +53,7 @@ const dbInit = {
 		await this.v3_9DB(c);
 		await this.v4_0DB(c);
 		await this.v4_1DB(c);
+		await this.v4_2DB(c);
 		// Encrypt legacy integration secrets and re-wrap values encrypted with the previous key.
 		await settingService.migrateSecrets(c);
 		await settingService.refresh(c);
@@ -73,6 +74,15 @@ const dbInit = {
 		return diff === 0;
 	},
 
+
+	async v4_2DB(c) {
+		// Cloudflare Email Service 发信：发信通道选择(auto / cloudflare / resend)
+		try {
+			await c.env.db.prepare(`ALTER TABLE setting ADD COLUMN send_provider TEXT NOT NULL DEFAULT 'auto';`).run();
+		} catch (e) {
+			console.warn(`跳过字段：${e.message}`);
+		}
+	},
 
 	async v4_1DB(c) {
 		// 上游 cloud-mail v3.5/v3.6：登录人机验证字段(login_verify / login_verify_count)，

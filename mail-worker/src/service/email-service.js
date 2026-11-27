@@ -23,7 +23,7 @@ import domainUtils from '../utils/domain-uitls';
 import account from "../entity/account";
 import { att } from '../entity/att';
 import { sanitizeEmailHtml } from '../utils/html-utils';
-import { normalizeEmailList, toId, toIdList, toInteger, toPageSize, toTrimmedString } from '../utils/input-utils';
+import { assertEnum, normalizeEmail, normalizeEmailList, toId, toIdList, toInteger, toPageSize, toTrimmedString } from '../utils/input-utils';
 import { normalizeEmailCursor, normalizeEmailLatestQuery, normalizeEmailListQuery, normalizeEmailSearch, normalizeFullFlag } from '../utils/email-query-utils';
 import proxyService from './proxy-service';
 import telegramService from './telegram-service';
@@ -32,6 +32,8 @@ import pushSubscriptionService from './push-subscription-service';
 import pushWebhookService from './push-webhook-service';
 import forwardMime from '../utils/forward-mime';
 import { notifyMailWsFromContext } from '../websocket/notify';
+import rateLimitService from './rate-limit-service';
+import { extractCfEmailErrorCode, mapCfEmailError, resolveSendPlan, shouldFallbackToResend } from './send-provider';
 
 // 上游 v3.6：外部投递时单封邮件的收件人+抄送+密送合计上限(Cloudflare Email / Resend 均为 50)。
 const MAX_PROVIDER_RECIPIENTS = 50;
@@ -190,7 +192,7 @@ const emailService = {
 		if (!Array.isArray(attachments)) throw new BizError('附件格式错误', 400);
 
 		const setting = await settingService.query(c);
-		const { resendTokens = {}, r2Domain, send, domainList = [] } = setting;
+		const { resendTokens = {}, r2Domain, send, domainList = [], sendProvider } = setting;
 		if (send === settingConst.send.CLOSE) throw new BizError(t('disabledSend'), 403);
 
 		const [userRow, accountRow] = await Promise.all([
@@ -225,8 +227,9 @@ const emailService = {
 
 		const domain = emailUtils.getDomain(accountRow.email).toLowerCase();
 		const resendToken = resendTokens[domain];
-		const useCloudflareEmail = !!c.env.email;
-		if (!useCloudflareEmail && !resendToken && !allInternal) throw new BizError(t('noSendProvider'));
+		// 发信通道：auto(有绑定先走 Cloudflare，发件域名类错误回退 Resend) / cloudflare / resend
+		const plan = resolveSendPlan({ mode: sendProvider, hasBinding: !!c.env.email, resendToken, allInternal });
+		if (plan.error) throw new BizError(t(plan.error), plan.error === 'cfEmailNotBound' ? 400 : undefined);
 		if (!name) name = emailUtils.getName(accountRow.email);
 
 		const { imageDataList: rawImages, html: convertedHtml } = await attService.toImageUrlHtml(c, sanitizeEmailHtml(rawContent), uid);
@@ -261,7 +264,7 @@ const emailService = {
 		const savedHtml = sanitizeEmailHtml(this.imgReplace(html, savedImages, r2Domain));
 
 		// 保存一条发件记录(含附件)，站内收件人直接投递，并累计发送次数。
-		const saveSent = async ({ to, cc: ccList = [], bcc: bccList = [], providerId = null }) => {
+		const saveSent = async ({ to, cc: ccList = [], bcc: bccList = [], providerId = null, provider = plan.provider }) => {
 			const recipients = [...to, ...ccList, ...bccList];
 			const emailData = {
 				sendEmail: accountRow.email,
@@ -270,7 +273,7 @@ const emailService = {
 				content: savedHtml,
 				text,
 				accountId,
-				status: allInternal || useCloudflareEmail ? emailConst.status.DELIVERED : emailConst.status.SENT,
+				status: allInternal || provider === 'cloudflare' ? emailConst.status.DELIVERED : emailConst.status.SENT,
 				type: emailConst.type.SEND,
 				userId: uid,
 				resendEmailId: providerId || null,
@@ -307,42 +310,48 @@ const emailService = {
 
 		if (!separate) {
 			let providerId = null;
+			let provider = plan.provider;
 			if (!allInternal) {
-				const providerParams = { ...providerBase, receiveEmail, cc, bcc };
-				const { data, error } = useCloudflareEmail
-					? await this.sendByCloudflareEmail(c, providerParams)
-					: await this.sendByResend(resendToken, providerParams);
-				if (error) throw new BizError(providerError(error));
-				providerId = data?.id;
+				const result = await this.dispatchByProvider(c, { ...providerBase, receiveEmail, cc, bcc }, plan, resendToken);
+				providerId = result.id;
+				provider = result.provider;
 			}
-			return [await saveSent({ to: receiveEmail, cc, bcc, providerId })];
+			return [await saveSent({ to: receiveEmail, cc, bcc, providerId, provider })];
 		}
 
 		const emails = [];
 		let sendError = '';
-		if (!allInternal && !useCloudflareEmail) {
+		if (!allInternal && plan.provider === 'resend') {
 			// Resend 批量接口一次提交全部独立邮件，但不支持附件(含正文内嵌图片)。
 			if (providerBase.attachments.length > 0) throw new BizError(t('resendSeparateAttachments'), 400);
 			const { data, error } = await this.sendBatchByResend(resendToken, { ...providerBase, receiveEmail });
 			if (error) throw new BizError(providerError(error));
 			for (const [index, address] of receiveEmail.entries()) {
-				emails.push(await saveSent({ to: [address], providerId: data?.data?.[index]?.id }));
+				emails.push(await saveSent({ to: [address], providerId: data?.data?.[index]?.id, provider: 'resend' }));
 			}
 		} else {
 			// 站内投递或 Cloudflare Email：逐人发送，失败即停止，已发送的部分保留并返回剩余收件人供重试。
+			let currentPlan = plan;
+			let firstError = null;
 			for (const address of receiveEmail) {
 				try {
 					let providerId = null;
+					let provider = currentPlan.provider;
 					if (!allInternal) {
-						const { data } = await this.sendByCloudflareEmail(c, { ...providerBase, receiveEmail: [address] });
-						providerId = data?.id;
+						const result = await this.dispatchByProvider(c, { ...providerBase, receiveEmail: [address] }, currentPlan, resendToken);
+						providerId = result.id;
+						provider = result.provider;
+						// 已回退到 Resend 后，其余收件人不再重复尝试 Cloudflare
+						if (result.fallback) currentPlan = { provider: 'resend', fallbackToken: '', error: '' };
 					}
-					emails.push(await saveSent({ to: [address], providerId }));
+					emails.push(await saveSent({ to: [address], providerId, provider }));
 				} catch (error) {
+					firstError = error;
 					sendError = providerError(error);
 					break;
 				}
 			}
+			if (emails.length === 0 && firstError instanceof BizError) throw firstError;
 		}
 
 		if (emails.length === 0 && sendError) throw new BizError(sendError);
@@ -352,6 +361,84 @@ const emailService = {
 			failedRecipients: receiveEmail.filter(address => !sentRecipients.has(address)),
 			error: sendError
 		};
+	},
+
+	// 按发信通道投递单封邮件。Cloudflare 失败时：仅发件人/域名配置类错误且存在 Resend Token 才回退，
+	// 其余错误映射为带 i18n 说明的 BizError。返回 { id, provider, fallback }。
+	async dispatchByProvider(c, params, plan, resendToken) {
+		if (plan.provider === 'cloudflare') {
+			try {
+				const { data } = await this.sendByCloudflareEmail(c, params);
+				return { id: data?.id, provider: 'cloudflare', fallback: false };
+			} catch (error) {
+				if (!plan.fallbackToken || !shouldFallbackToResend(error)) throw mapCfEmailError(error);
+				console.warn(`Cloudflare 发信失败，回退到 Resend：${error?.message || error}`);
+				const cfCode = extractCfEmailErrorCode(error);
+				let fallbackData;
+				try {
+					const { data, error: resendError } = await this.sendByResend(plan.fallbackToken, params);
+					if (resendError) throw resendError;
+					fallbackData = data;
+				} catch (resendError) {
+					const detail = String(resendError?.message || '邮件发送失败').slice(0, 1500);
+					throw new BizError(`${detail} (Cloudflare: ${cfCode})`, 502);
+				}
+				return { id: fallbackData?.id, provider: 'resend', fallback: true };
+			}
+		}
+		let result;
+		try {
+			result = await this.sendByResend(resendToken, params);
+		} catch (error) {
+			throw new BizError(String(error?.message || '邮件发送失败').slice(0, 2000), 502);
+		}
+		if (result?.error) throw new BizError(String(result.error?.message || '邮件发送失败').slice(0, 2000), 502);
+		return { id: result?.data?.id, provider: 'resend', fallback: false };
+	},
+
+	// 管理员发信测试：POST /setting/testEmailSend
+	async testSend(c, params = {}) {
+		if (!params || typeof params !== 'object' || Array.isArray(params)) throw new BizError('参数格式错误', 400);
+		const to = normalizeEmail(params.to, { name: '收件人', required: true });
+		const setting = await settingService.query(c);
+		const domains = (setting.domainList || []).map(item => String(item).replace(/^@/, '').toLowerCase());
+		const admin = typeof c.env.admin === 'string' ? c.env.admin.trim().toLowerCase() : '';
+		let from = params.from === undefined || params.from === null || params.from === ''
+			? ''
+			: normalizeEmail(params.from, { name: '发件人', required: true });
+		if (!from) from = admin && domains.includes(emailUtils.getDomain(admin).toLowerCase()) ? admin : `noreply@${domains[0]}`;
+		const domain = emailUtils.getDomain(from).toLowerCase();
+		if (!domains.includes(domain)) throw new BizError(t('notEmailDomain'), 400);
+		// 发件人只能是管理员邮箱、noreply@已配置域名，或已存在(未删除)的邮箱账号，避免伪造任意域名下的地址
+		if (from !== admin && from !== `noreply@${domain}`) {
+			const owned = await accountService.selectByEmailIncludeDel(c, from);
+			if (!owned || owned.isDel !== isDel.NORMAL) throw new BizError(t('senderAccountNotExist'), 400);
+		}
+		const forced = params.provider === undefined || params.provider === null || params.provider === ''
+			? ''
+			: assertEnum(params.provider, ['cloudflare', 'resend'], { name: 'provider' });
+		await rateLimitService.check(c, 'test-email-send', { limit: 10, windowSeconds: 600 });
+
+		const resendToken = (setting.resendTokens || {})[domain];
+		const plan = resolveSendPlan({ mode: forced || setting.sendProvider, hasBinding: !!c.env.email, resendToken });
+		if (plan.error) throw new BizError(t(plan.error), plan.error === 'cfEmailNotBound' ? 400 : undefined);
+
+		const text = 'CloudMail 发信测试：如果你收到这封邮件，说明发信通道配置正常。\nThis is a CloudMail test email. If you received it, your sending provider is working.';
+		const html = `<p>CloudMail 发信测试：如果你收到这封邮件，说明发信通道配置正常。</p><p>This is a CloudMail test email. If you received it, your sending provider is working.</p>`;
+		const result = await this.dispatchByProvider(c, {
+			name: 'CloudMail',
+			accountEmail: from,
+			subject: 'CloudMail 发信测试 / Test email',
+			text,
+			html,
+			attachments: [],
+			receiveEmail: [to],
+			cc: [],
+			bcc: [],
+			sendType: 'send',
+			messageId: null
+		}, plan, resendToken);
+		return { provider: result.provider, messageId: result.id || '', fallback: result.fallback };
 	},
 
 	// Resend 批量接口：为每位收件人构造一封独立邮件(严格校验，返回 ID 与提交顺序一致)。

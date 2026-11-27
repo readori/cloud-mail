@@ -1848,6 +1848,37 @@ export default {
         ]
       }
     },
+    "/setting/testEmailSend": {
+      "post": {
+        "operationId": "setting_post_setting_testEmailSend",
+        "summary": "POST /setting/testEmailSend",
+        "responses": {
+          "200": {
+            "description": "Successful CloudMail response"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required or expired"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "webSession": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/setting/testTelegram": {
       "post": {
         "operationId": "setting_post_setting_testTelegram",

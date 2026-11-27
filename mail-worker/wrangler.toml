@@ -20,8 +20,12 @@ enabled = true
 #binding = "r2"			#r2对象存储绑定名默认不可修改
 #bucket_name = ""		#r2对象存储桶的名字
 
-#[[send_email]]
-#name = "email"			#CF发件, 配置后优先使用
+# Cloudflare Email Service 发信
+# 需先在 Cloudflare 控制台 Email Service → Email Sending 接入发件域名(自动添加 SPF/DKIM 记录)
+# 发给任意收件人需 Workers 付费版
+# 管理后台「发信服务」可选 自动/Cloudflare/Resend, 自动模式在域名未接入时回退 Resend
+[[send_email]]
+name = "email"
 
 # 上游 cloud-mail v3.4.x：站内互发的邮件按转发规则转发到已验证的外部邮箱(不限单个地址)
 [[send_email]]

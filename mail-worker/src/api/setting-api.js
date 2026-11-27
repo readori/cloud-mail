@@ -3,6 +3,7 @@ import result from '../model/result';
 import settingService from '../service/setting-service';
 import userContext from "../security/user-context";
 import telegramService from '../service/telegram-service';
+import emailService from '../service/email-service';
 
 app.put('/setting/set', async (c) => {
 	await settingService.set(c, await c.req.json());
@@ -17,6 +18,11 @@ app.get('/setting/query', async (c) => {
 
 app.post('/setting/testTelegram', async (c) => {
 	const summary = await telegramService.testBot(c);
+	return c.json(result.ok(summary));
+});
+
+app.post('/setting/testEmailSend', async (c) => {
+	const summary = await emailService.testSend(c, await c.req.json().catch(() => ({})));
 	return c.json(result.ok(summary));
 });
 

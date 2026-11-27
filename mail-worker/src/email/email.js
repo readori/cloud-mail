@@ -1,5 +1,5 @@
 import PostalMime from 'postal-mime';
-import { ensureEmailSenderColumn } from '../init/schema-heal';
+import { ensureEmailSenderColumn, ensureSendProviderColumn } from '../init/schema-heal';
 import emailService from '../service/email-service';
 import accountService from '../service/account-service';
 import settingService from '../service/setting-service';
@@ -62,6 +62,7 @@ export async function email(message, env, ctx) {
 	const context = { env };
 	try {
 		await ensureEmailSenderColumn(env);
+		await ensureSendProviderColumn(env);
 		const setting = await settingService.query(context);
 		const {
 			receive, tgChatId, tgBotStatus, forwardStatus, forwardEmail,

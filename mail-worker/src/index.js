@@ -8,7 +8,7 @@ import oauthService from './service/oauth-service';
 import analysisService from './service/analysis-service';
 import rateLimitService from './service/rate-limit-service';
 import openAPIDocument from './openapi/openapi-document.js';
-import { ensureEmailSenderColumn } from './init/schema-heal';
+import { ensureEmailSenderColumn, ensureSendProviderColumn } from './init/schema-heal';
 import { handleWsUpgrade } from './websocket/connect';
 import proxyService from './service/proxy-service';
 // 上游 v3.6 实时推送：Durable Object 类必须从 Worker 入口导出。
@@ -68,6 +68,7 @@ export default {
 		else if (requestPath.startsWith('/api/')) url.pathname = requestPath.slice('/api'.length);
 		if (isAPIRequest) {
 			await ensureEmailSenderColumn(env);
+			await ensureSendProviderColumn(env);
 			req = new Request(url.toString(), req);
 			const response = await app.fetch(req, env, ctx);
 			const headers = new Headers(response.headers);
@@ -88,6 +89,7 @@ export default {
 
 	async scheduled(controller, env, ctx) {
 		await ensureEmailSenderColumn(env);
+		await ensureSendProviderColumn(env);
 		if (controller.cron === '*/30 * * * *') {
 			ctx.waitUntil(runScheduledTasks([() => analysisService.refreshEchartsCache({ env })]));
 			return;

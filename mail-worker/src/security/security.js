@@ -64,7 +64,8 @@ const permissionPaths = {
 		['PUT', '/setting/setBackground'],
 		['DELETE', '/setting/deleteBackground'],
 		['PUT', '/setting/setBlacklist'],
-		['POST', '/setting/testTelegram']
+		['POST', '/setting/testTelegram'],
+		['POST', '/setting/testEmailSend']
 	],
 	'analysis:query': [['GET', '/analysis/echarts']],
 	'reg-key:add': [['POST', '/regKey/add'], ['GET', '/role/selectUse']],
