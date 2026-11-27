@@ -58,7 +58,7 @@
 
 - **💻 响应式设计**：响应式布局自动适配PC和大部分手机端浏览器
 
-- **📧 邮件发送**：集成Resend发送邮件，支持群发，内嵌图片和附件发送，发送状态查看
+- **📧 邮件发送**：集成Cloudflare Email Service或Resend发送邮件，支持群发，内嵌图片和附件发送，发送状态查看
 
 - **🛡️ 管理员功能**：可以对用户，邮件进行管理，RABC权限控制对功能及使用资源限制
 
@@ -85,6 +85,14 @@
 
 
 ## 最新更新
+
+### 2026-11 · Cloudflare Email Service 发信
+
+- **Cloudflare Email Service 发信**：外发邮件除 Resend 外，可通过 Cloudflare `send_email` 绑定(Email Sending)发送。
+- **发信服务选择**：管理员可在发信设置中选择 `auto`(自动)、`cloudflare` 或 `resend`。自动模式(默认)优先使用 Cloudflare，仅在发件域名尚未接入时回退 Resend。
+- **错误提示**：Cloudflare 错误码(如 `E_SENDER_NOT_VERIFIED`、`E_RECIPIENT_PLAN_RESTRICTED`)会附带简要的修复提示。
+- **管理员测试发信**：在管理后台发送测试邮件，确认当前生效的发信方式。
+- **发信绑定配置**：`mail-worker/wrangler.toml` 已声明 `email` send_email 绑定；使用 GitHub Actions 部署时，将仓库变量 `CLOUDFLARE_EMAIL` 设为 `true` 即会声明该绑定。
 
 ### 2026-11 · 同步上游 cloud-mail v3.6.0
 
@@ -166,6 +174,20 @@ cloud-mail
 │   ├── package.json			# 项目依赖
 └── └── env.release				# 项目配置
 ```
+
+## Cloudflare Email Service 发信配置
+
+外发邮件可使用 Cloudflare Email Service(Email Sending)或 Resend。
+
+1. 在 Cloudflare 控制台打开 **Email Service → Email Sending**，接入每个发件域名。Cloudflare 会自动添加所需的 SPF 和 DKIM 记录。
+2. 部署带 `email` send_email 绑定的 Worker：手动部署时 `wrangler.toml` 已声明；使用 GitHub Actions 工作流时，将仓库变量 `CLOUDFLARE_EMAIL` 设为 `true`。
+3. 在管理后台的发信设置中保持 `auto`(自动)，或明确选择 `cloudflare` / `resend`。
+4. 在管理后台发送一封测试邮件，确认可以正常投递。
+
+注意事项：
+
+- 发给任意收件人需要 Workers 付费版。
+- 自动模式仅在发件域名配置错误时回退 Resend，且需要该域名已配置 Resend Token。
 
 ## 后端安全加固说明
 

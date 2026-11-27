@@ -23,7 +23,7 @@ Useful links:
 
 - **Low-cost serverless deployment** — run the backend and Web assets on Cloudflare Workers.
 - **Responsive Web interface** — Vue 3 UI for desktop and modern mobile browsers.
-- **Mail sending** — Resend integration, multiple recipients, inline images, attachments, and delivery-status handling.
+- **Mail sending** — Cloudflare Email Service or Resend, multiple recipients, inline images, attachments, and delivery-status handling.
 - **CC/BCC support** — compose, save drafts, send, store, and render CC/BCC recipients.
 - **Administration** — user and mail management, role-based access controls, and resource limits.
 - **Attachments** — receive, store, download, and send files with Cloudflare R2 when configured.
@@ -38,6 +38,14 @@ Useful links:
 - **Security hardening** — protected initialization, signed webhooks, encrypted dynamic secrets, hardened sessions, migration checks, and production contract tests.
 
 ## Latest updates
+
+### 2026-11 · Cloudflare Email Service sending
+
+- **Cloudflare Email Service** — outbound mail can be sent through the Cloudflare `send_email` binding (Email Sending) as well as Resend.
+- **Provider selection** — administrators choose `auto`, `cloudflare`, or `resend` in the email sending settings. `auto` (the default) prefers Cloudflare and falls back to Resend only when the sender domain is not onboarded yet.
+- **Error hints** — Cloudflare error codes such as `E_SENDER_NOT_VERIFIED` or `E_RECIPIENT_PLAN_RESTRICTED` are shown with a short note on what to fix.
+- **Admin test send** — send a test message from the admin settings to confirm which provider is active.
+- **Binding setup** — `mail-worker/wrangler.toml` declares the `email` send_email binding; the GitHub Actions deployment workflow declares it when the repository variable `CLOUDFLARE_EMAIL` is `true`.
 
 ### 2026-11 · synced with upstream cloud-mail v3.6.0
 
@@ -180,6 +188,20 @@ CFMAIL_PUSH_GATEWAY_URL=disabled
 ```
 
 Core Web and mail functionality continues to work when the hosted push service is disabled.
+
+## Cloudflare Email Service sending
+
+Outbound mail can use Cloudflare Email Service (Email Sending) or Resend.
+
+1. In the Cloudflare dashboard, open **Email Service → Email Sending** and onboard each sender domain. Cloudflare adds the required SPF and DKIM DNS records automatically.
+2. Deploy the Worker with the `email` `send_email` binding: `wrangler.toml` already declares it for manual deploys; with the GitHub Actions workflow, set the repository variable `CLOUDFLARE_EMAIL=true`.
+3. In the admin settings, keep the sending provider on `auto`, or select `cloudflare` or `resend` explicitly.
+4. Send a test message from the admin settings to confirm delivery.
+
+Notes:
+
+- Sending to arbitrary recipients requires a Workers Paid plan.
+- `auto` falls back to Resend only for sender-domain configuration errors, and only when a Resend token is configured for that domain.
 
 ## GitHub Actions CI and Cloudflare deployment
 
