@@ -1,5 +1,10 @@
 <template>
-  <el-container class="layout">
+  <div v-if="uiStore.impersonation.impersonating" class="impersonation-bar">
+    <Icon icon="material-symbols:supervised-user-circle" width="18" height="18" />
+    <span class="impersonation-text">{{ $t('impersonating', { email: uiStore.impersonation.target?.email || '' }) }}</span>
+    <el-button size="small" round :loading="stopping" @click="returnToAdmin">{{ $t('returnToAdmin') }}</el-button>
+  </div>
+  <el-container class="layout" :class="{ 'has-impersonation-bar': uiStore.impersonation.impersonating }">
     <el-aside
         class="aside"
         :class="uiStore.asideShow ? 'aside-show' : 'el-aside-hide'">
@@ -28,8 +33,26 @@ import Main from '@/layout/main/index.vue'
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import {useUiStore} from "@/store/ui.js";
 import writer from '@/layout/write/index.vue'
+import {Icon} from "@iconify/vue";
+import {impersonateStop} from "@/request/impersonate.js";
+import {ElMessage} from "element-plus";
+import {useI18n} from 'vue-i18n';
 
 const uiStore = useUiStore();
+const {t} = useI18n();
+const stopping = ref(false);
+
+async function returnToAdmin() {
+  if (stopping.value) return;
+  stopping.value = true;
+  try {
+    await impersonateStop();
+    window.location.reload();
+  } catch (e) {
+    stopping.value = false;
+    ElMessage({ message: e?.response?.data?.message || e?.message || t('returnToAdminFailed'), type: 'error', plain: true });
+  }
+}
 const writerRef = ref({})
 const isMobile = ref(window.innerWidth < 1025)
 const handleResize = () => {
@@ -124,5 +147,34 @@ onBeforeUnmount(() => {
   display: flex;
   pointer-events: none;
   opacity: 0;
+}
+</style>
+<style scoped>
+.impersonation-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 3000;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  color: #fff;
+  background: linear-gradient(90deg, var(--el-color-warning), var(--el-color-warning-dark-2, #b88230));
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.18);
+}
+.impersonation-text {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.layout.has-impersonation-bar {
+  padding-top: 40px;
+  box-sizing: border-box;
 }
 </style>

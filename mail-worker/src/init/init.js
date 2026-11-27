@@ -1,5 +1,6 @@
 import settingService from '../service/setting-service';
 import loginLogService from '../service/login-log-service';
+import impersonationService from '../service/impersonation-service';
 import emailUtils from '../utils/email-utils';
 import { emailConst } from '../const/entity-const';
 import rateLimitService from '../service/rate-limit-service';
@@ -106,6 +107,7 @@ const dbInit = {
 		await settingService.ensureLatestColumns(c);
 		// 用户登录记录(每次登录的 IP/地区/设备)，供管理员查看
 		await loginLogService.ensureTable(c);
+		await impersonationService.ensureTable(c);
 		// 「登录日志」权限：超级管理员默认拥有，可在「权限」中分配给其他身份
 		await loginLogService.ensurePerm(c);
 		const statements = [

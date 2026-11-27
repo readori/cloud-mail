@@ -21,4 +21,5 @@ import '../api/telegram-api'
 import '../api/oauth-api'
 import '../api/device-api'
 import '../api/capability-api'
+import '../api/impersonate-api'
 export default app;

@@ -16,7 +16,8 @@ export const useUiStore = defineStore('ui', {
             email: 0,
             send: 0,
             sysEmail: 0
-        }
+        },
+        impersonation: { impersonating: false }
     }),
     actions: {
         showNotice() {

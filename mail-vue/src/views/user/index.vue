@@ -109,6 +109,7 @@
                     <el-dropdown-item @click="openAccountList(props.row.userId)" >{{ $t('account') }}</el-dropdown-item>
                     <el-dropdown-item @click="openDetails(props.row)" >{{ $t('details') }}</el-dropdown-item>
                     <el-dropdown-item v-if="canViewLoginLog" @click="openLoginLog(props.row)" >{{ $t('loginLog') }}</el-dropdown-item>
+                    <el-dropdown-item v-if="canImpersonate(props.row)" divided @click="doImpersonate(props.row)" >{{ $t('impersonate') }}</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -407,6 +408,14 @@
               </div>
             </template>
           </el-dropdown-item>
+          <el-dropdown-item v-if="canImpersonate(rightClickUser)" divided @click="doImpersonate(rightClickUser)" >
+            <template #default>
+              <div class="right-dropdown-item" >
+                <Icon icon="material-symbols:supervised-user-circle" width="20" height="20" />
+                <span>{{ t('impersonate') }}</span>
+              </div>
+            </template>
+          </el-dropdown-item>
           <el-dropdown-item v-if="rightClickUser.type !== 0" @click="delOneUser(rightClickUser)" >
             <template #default>
               <div class="right-dropdown-item" >
@@ -437,6 +446,7 @@ import {
   userLoginLog
 } from '@/request/user.js'
 import {roleSelectUseCompat} from "@/request/role.js";
+import {impersonateStart} from "@/request/impersonate.js";
 import {Icon} from "@iconify/vue";
 import loading from "@/components/loading/index.vue";
 import {tzDayjs} from "@/utils/day.js";
@@ -673,6 +683,25 @@ function openAccountList(userId) {
 
 // 登录记录需要「登录日志」权限(超级管理员默认拥有，后端同样校验)
 const canViewLoginLog = computed(() => hasPerm('login-log:query'))
+
+// 仅超级管理员(权限 *)可代登录；不对管理员账号、自己、已删除账号显示。
+const isSuperAdmin = computed(() => Array.isArray(userStore.user.permKeys) && userStore.user.permKeys.includes('*'))
+function canImpersonate(row) {
+  return isSuperAdmin.value && row && row.type !== 0 && row.isDel !== 1 && row.userId !== userStore.user.userId
+}
+function doImpersonate(row) {
+  ElMessageBox.confirm(t('impersonateConfirm', {msg: row.email}), {
+    confirmButtonText: t('impersonateConfirmBtn'),
+    cancelButtonText: t('cancel'),
+    type: 'warning'
+  }).then(() => {
+    impersonateStart(row.userId).then(() => {
+      window.location.reload()
+    }).catch(e => {
+      ElMessage({ message: e?.response?.data?.message || e?.message || t('impersonateFailed'), type: 'error', plain: true })
+    })
+  }).catch(() => {})
+}
 const loginLogShow = ref(false)
 const loginLogLoading = ref(false)
 const loginLogList = reactive([])

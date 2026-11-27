@@ -784,6 +784,130 @@ export default {
         ]
       }
     },
+    "/impersonate/logs": {
+      "get": {
+        "operationId": "impersonate_get_impersonate_logs",
+        "summary": "GET /impersonate/logs",
+        "responses": {
+          "200": {
+            "description": "Successful CloudMail response"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required or expired"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "webSession": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/impersonate/start": {
+      "post": {
+        "operationId": "impersonate_post_impersonate_start",
+        "summary": "POST /impersonate/start",
+        "responses": {
+          "200": {
+            "description": "Successful CloudMail response"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required or expired"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "webSession": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/impersonate/status": {
+      "get": {
+        "operationId": "impersonate_get_impersonate_status",
+        "summary": "GET /impersonate/status",
+        "responses": {
+          "200": {
+            "description": "Successful CloudMail response"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required or expired"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "webSession": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/impersonate/stop": {
+      "post": {
+        "operationId": "impersonate_post_impersonate_stop",
+        "summary": "POST /impersonate/stop",
+        "responses": {
+          "200": {
+            "description": "Successful CloudMail response"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required or expired"
+          },
+          "403": {
+            "description": "Permission denied"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "webSession": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/init": {
       "post": {
         "operationId": "init_post_init",

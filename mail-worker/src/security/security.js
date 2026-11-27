@@ -1,4 +1,5 @@
 import BizError from '../error/biz-error';
+import { isDel, userConst } from '../const/entity-const';
 import constant from '../const/constant';
 import jwtUtils from '../utils/jwt-utils';
 import KvConst from '../const/kv-const';
@@ -8,6 +9,7 @@ import permService from '../service/perm-service';
 import { t } from '../i18n/i18n';
 import app from '../hono/hono';
 import { assertCookieCsrf, clearWebSession, getAuthToken, refreshWebSessionCookie } from './auth-session';
+import impersonationService from '../service/impersonation-service';
 
 const TOKEN_RENEW_WINDOW_SECONDS = 7 * 24 * 60 * 60;
 const REFRESHED_TOKEN_HEADER = 'X-Refreshed-Token';
@@ -75,6 +77,54 @@ const permissionPaths = {
 
 const protectedPermissionRoutes = Object.values(permissionPaths).flat();
 
+// 代登录会话采用「白名单、默认拒绝」：只放行“邮箱本身”的读写（看信、发信、星标、账号查看/整理、
+// 统计、查身份、切回/登出）。其余一律拒绝——包括目标恰好拥有的用户/身份/全局设置等管理权限，
+// 从而即便被代登录的目标是被授予管理权限的子管理员，也无法通过 /user/* 改密码、删号或提权。
+// 1) 受权限保护的路由：仅这些权限键对应的路由可用，且仍需目标确实拥有该权限。
+//    account:add/delete 用于代登录时为该账号添加/删除子邮箱(管理该用户自己的邮箱，不改凭据、不提权)。
+const impersonationAllowedPermKeys = new Set(['email:send', 'email:delete', 'account:query', 'account:add', 'account:delete', 'analysis:query']);
+// 2) 不在权限表内、但代登录时明确放行的邮箱基础读写与会话控制路由。
+const impersonationAllowedExactRoutes = [
+	['GET', '/capabilities'],
+	['GET', '/device/status'],
+	['GET', '/health'],
+	['GET', '/health/detail'],
+	['GET', '/my/loginUserInfo'],
+	['GET', '/impersonate/status'],
+	['POST', '/impersonate/stop'],
+	['DELETE', '/logout'],
+	['GET', '/setting/websiteConfig'],
+	['GET', '/email/list'],
+	['GET', '/email/latest'],
+	['GET', '/email/detail'],
+	['GET', '/email/attList'],
+	['GET', '/email/raw'],
+	['PUT', '/email/read'],
+	['GET', '/star/list'],
+	['POST', '/star/add'],
+	['DELETE', '/star/cancel']
+];
+// 3) 放行的只读资源前缀（附件/图片）。
+const impersonationAllowedPrefixes = ['/oss'];
+// 4) 明确禁止的敏感路由（凭据/账号销毁、再次代登录、推送订阅等会在代登录结束后仍存在的持久化通道）。
+const impersonationForbiddenRoutes = [
+	['PUT', '/my/resetPassword'],
+	['DELETE', '/my/delete'],
+	['POST', '/impersonate/start'],
+	['POST', '/device/register'],
+	['DELETE', '/device/unregister']
+];
+
+function impersonationRouteAllowed(method, path, permKeys) {
+	if (impersonationForbiddenRoutes.some(route => routeMatches(route, method, path))) return false;
+	if (impersonationAllowedExactRoutes.some(route => routeMatches(route, method, path))) return true;
+	if (impersonationAllowedPrefixes.some(prefix => path === prefix || path.startsWith(prefix + '/'))) return true;
+	const allowed = (Array.isArray(permKeys) ? permKeys : [])
+		.filter(key => impersonationAllowedPermKeys.has(key))
+		.flatMap(key => permissionPaths[key] || []);
+	return allowed.some(route => routeMatches(route, method, path));
+}
+
 function routeMatches(route, method, path) {
 	const [routeMethod, routePath] = route;
 	if (routeMethod !== method) return false;
@@ -124,6 +174,42 @@ app.use('*', async (c, next) => {
 	}
 
 	const userId = Number(tokenPayload.userId);
+
+	// 代登录会话：独立存放，不走目标账号的正常会话；仅放行“邮箱本身”的读写(白名单)，并每次重新核验目标状态。
+	if (tokenPayload.imp === 1) {
+		const impRecord = await impersonationService.resolveSession(c, tokenPayload.token, userId);
+		if (!impRecord) {
+			if (auth.source === 'cookie') clearWebSession(c);
+			throw new BizError(t('authExpired'), 401);
+		}
+		// 实时核验目标：被禁用/删除后代登录会话立即失效，不再用 start 时的快照放行。
+		const targetRow = await userService.selectById(c, userId);
+		if (!targetRow || targetRow.isDel === isDel.DELETE || targetRow.status === userConst.status.BAN) {
+			if (auth.source === 'cookie') clearWebSession(c);
+			throw new BizError(t('authExpired'), 401);
+		}
+		const permKeys = await permService.userPermKeys(c, userId);
+		if (!impersonationRouteAllowed(method, path, permKeys)) {
+			throw new BizError(t('impersonationForbidden'), 403);
+		}
+		c.set('user', {
+			userId: targetRow.userId,
+			email: targetRow.email,
+			type: targetRow.type,
+			status: targetRow.status,
+			isDel: targetRow.isDel
+		});
+		c.set('authToken', auth.token);
+		c.set('authSource', auth.source);
+		c.set('impersonation', {
+			adminUserId: impRecord.adminUserId,
+			adminEmail: impRecord.adminEmail,
+			targetUserId: impRecord.targetUserId,
+			auditId: impRecord.auditId
+		});
+		return next();
+	}
+
 	const authInfo = await c.env.kv.get(KvConst.AUTH_INFO + userId, { type: 'json' });
 	if (!authInfo || !authInfo.user || !Array.isArray(authInfo.tokens) || !authInfo.tokens.includes(tokenPayload.token)) {
 		if (auth.source === 'cookie') clearWebSession(c);

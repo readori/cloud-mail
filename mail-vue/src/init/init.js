@@ -7,6 +7,8 @@ import router from "@/router";
 import {websiteConfig} from "@/request/setting.js";
 import i18n from "@/i18n/index.js";
 import { purgeLegacyAuthToken, setAuthenticated } from "@/auth/session.js";
+import {impersonateStatus} from "@/request/impersonate.js";
+import {useUiStore} from "@/store/ui.js";
 
 export async function init() {
     document.title = '\u200B'
@@ -36,6 +38,11 @@ export async function init() {
     }
 
     setAuthenticated(true)
+    try {
+        useUiStore().impersonation = await impersonateStatus(true)
+    } catch (e) {
+        useUiStore().impersonation = { impersonating: false }
+    }
     accountStore.currentAccountId = user.account.accountId
     accountStore.currentAccount = user.account
     userStore.user = user
