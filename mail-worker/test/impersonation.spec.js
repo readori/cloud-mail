@@ -114,27 +114,38 @@ describe('super-admin impersonation', () => {
 		expect(row.startTime).toBeTruthy();
 	});
 
-	it('blocks management/credential routes even when the target holds those perms (allowlist)', async () => {
-		// Give the victim's role delegated admin perms (user:set-pwd / user:delete / account:delete).
+	it('grants the target\'s own admin permissions during impersonation, but keeps the safety gates', async () => {
 		const list = await (await get('/user/list?num=1&size=50', bearer(adminToken))).json();
 		const victim = list.data.list.find(u => u.email === 'victim@example.com');
-		const other = list.data.list.find(u => u.email === 'other@example.com');
-		await env.db.prepare(`INSERT OR IGNORE INTO perm (perm_key, role_id) VALUES ('user:set-pwd', ?),('user:delete', ?),('account:delete', ?),('device-register-noop', ?)`).bind(victim.type, victim.type, victim.type, victim.type).run().catch(() => {});
-		// Fallback: directly grant via role_perm if the schema differs — otherwise rely on whatever perms exist.
+		// Make the victim an admin-capable account: grant its role user:query + all-email:query.
+		for (const key of ['user:query', 'all-email:query']) {
+			const row = await env.db.prepare('SELECT perm_id AS id FROM perm WHERE perm_key = ?').bind(key).first();
+			if (row?.id) await env.db.prepare('INSERT INTO role_perm (role_id, perm_id) VALUES (?, ?)').bind(victim.type, row.id).run().catch(() => {});
+		}
 		const impToken = (await (await post('/impersonate/start', { userId: victim.userId }, bearer(adminToken))).json()).data.token;
 
-		// Even if the target role had user:set-pwd, impersonation must not allow changing anyone's password.
+		// Full impersonation: the target's own admin pages work (this is the bug we are fixing — they used to 403).
+		expect((await get('/user/list?num=1&size=10', bearer(impToken))).status).toBe(200);
+		expect((await get('/allEmail/list?num=1&size=10', bearer(impToken))).status).not.toBe(403); // perm granted; 200 in prod (test D1 lacks a column)
+
+		// Safety gates still hold regardless of the target's perms:
+		// changing this account's own login password / self-delete, nested impersonation, push registration.
+		expect((await (await SELF.fetch(`${BASE}/my/resetPassword`, {
+			method: 'PUT', headers: { ...JSON_HEADERS, ...bearer(impToken) },
+			body: JSON.stringify({ password: 'hijacked-password-123' })
+		})).status)).toBe(403);
+		expect((await del('/my/delete', bearer(impToken))).status).toBe(403);
+		expect((await post('/impersonate/start', { userId: victim.userId }, bearer(impToken))).status).toBe(403);
+		expect((await post('/device/register', { token: 'x', platform: 'ios' }, bearer(impToken))).status).toBe(403);
+
+		// The super-admin (env.admin) is always protected, even while impersonating an admin-capable account.
+		const adminUser = list.data.list.find(u => u.email === 'admin@example.com');
 		expect((await (await SELF.fetch(`${BASE}/user/setPwd`, {
 			method: 'PUT', headers: { ...JSON_HEADERS, ...bearer(impToken) },
-			body: JSON.stringify({ userId: victim.userId, password: 'hijacked-password-123' })
-		})).status)).toBe(403);
-		expect((await del(`/user/delete?userIds=${other.userId}`, bearer(impToken))).status).toBe(403);
-		// Persistence channel (push registration) is blocked.
-		expect((await post('/device/register', { token: 'x', platform: 'ios' }, bearer(impToken))).status).toBe(403);
-		// Admin-only settings write is blocked.
-		expect((await (await SELF.fetch(`${BASE}/setting/set`, {
-			method: 'PUT', headers: { ...JSON_HEADERS, ...bearer(impToken) }, body: JSON.stringify({})
-		})).status)).toBe(403);
+			body: JSON.stringify({ userId: adminUser.userId, password: 'take-over-admin-123' })
+		})).status)).not.toBe(200);
+		// Confirm the admin password is unchanged.
+		expect((await post('/login', { email: 'admin@example.com', password: 'admin-password-123' })).status).toBe(200);
 		await post('/impersonate/stop', {}, bearer(impToken));
 	});
 
@@ -145,8 +156,6 @@ describe('super-admin impersonation', () => {
 		expect((await get('/email/list?accountId=0&num=1&size=10', bearer(impToken))).status).not.toBe(403);
 		expect((await get('/star/list?num=1&size=10', bearer(impToken))).status).not.toBe(403);
 		expect((await get('/my/loginUserInfo', bearer(impToken))).status).toBe(200);
-		// Reading all users' mail (admin-only) is denied.
-		expect((await get('/allEmail/list?num=1&size=10', bearer(impToken))).status).toBe(403);
 		// Managing the target's own sub-mailboxes (add/delete) is allowed, not forbidden by impersonation.
 		expect((await get('/account/list?num=1&size=10', bearer(impToken))).status).not.toBe(403);
 		expect((await post('/account/add', { email: 'sub@example.com' }, bearer(impToken))).status).not.toBe(403);
