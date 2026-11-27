@@ -177,18 +177,48 @@
                 </div>
               </div>
               <div class="setting-item">
-                <div><span>{{ setting.hasCfEmail ? $t('cloudflareEmailSending') : $t('resendToken') }}</span></div>
-                <div v-if="setting.hasCfEmail">
-                  <span>{{ $t('enabled') }}</span>
+                <div><span>{{ $t('sendProvider') }}</span></div>
+                <div>
+                  <el-select
+                      class="send-provider-select"
+                      :model-value="setting.sendProvider || 'auto'"
+                      @change="changeSendProvider"
+                      :disabled="!canSetSetting || !settingReady || settingLoading"
+                  >
+                    <el-option v-for="item in sendProviderOptions" :key="item.value" :label="item.label" :value="item.value"/>
+                  </el-select>
                 </div>
-                <div v-else>
+              </div>
+              <div class="setting-item">
+                <div>
+                  <span>{{ $t('cloudflareEmailSending') }}</span>
+                  <el-tooltip effect="dark" :content="$t('cfEmailSendingDesc')">
+                    <Icon class="warning" icon="fe:warning" width="18" height="18"/>
+                  </el-tooltip>
+                </div>
+                <div>
+                  <span>{{ setting.hasCfEmail ? $t('cfEmailBound') : $t('cfEmailNotBound') }}</span>
+                </div>
+              </div>
+              <div class="setting-item">
+                <div><span>{{ $t('resendToken') }}</span></div>
+                <div>
                   <el-button class="opt-button" style="margin-top: 0" @click="openResendList" size="small"
-                             type="primary">
+                             type="primary" :aria-label="$t('resendTokenList')">
                     <Icon icon="ic:round-list" width="18" height="18"/>
                   </el-button>
-                  <el-button class="opt-button" style="margin-top: 0" @click="openResendForm" size="small"
-                             type="primary">
+                  <el-button v-if="canSetSetting" class="opt-button" style="margin-top: 0" @click="openResendForm" size="small"
+                             type="primary" :aria-label="$t('resendToken')">
                     <Icon icon="material-symbols:add-rounded" width="16" height="16"/>
+                  </el-button>
+                </div>
+              </div>
+              <div class="setting-item" v-if="canSetSetting">
+                <div><span>{{ $t('testEmailSend') }}</span></div>
+                <div>
+                  <el-button class="opt-button" style="margin-top: 0" @click="openTestEmail" size="small"
+                             type="primary" :aria-label="$t('testEmailSend')">
+                    <Icon icon="material-symbols:send-outline-rounded" width="16" height="16"/>
                   </el-button>
                 </div>
               </div>
@@ -510,6 +540,26 @@
           </el-select>
           <el-input type="text" :placeholder="$t('addResendTokenDesc')" v-model="resendTokenForm.token"/>
           <el-button type="primary" :loading="settingLoading" @click="saveResendToken">{{ $t('save') }}</el-button>
+        </form>
+      </el-dialog>
+      <el-dialog v-model="testEmailShow" :title="$t('testEmailSend')" width="340" @closed="testEmailResult = null">
+        <form @submit.prevent>
+          <el-input type="text" style="margin-bottom: 15px" :placeholder="$t('testEmailTo')" v-model="testEmailForm.to"/>
+          <el-input type="text" style="margin-bottom: 15px" :placeholder="$t('testEmailFrom')" v-model="testEmailForm.from"/>
+          <el-select style="margin-bottom: 15px" v-model="testEmailForm.provider">
+            <el-option v-for="item in testProviderOptions" :key="item.value" :label="item.label" :value="item.value"/>
+          </el-select>
+          <el-alert v-if="testEmailResult" style="margin-bottom: 15px" :closable="false" show-icon
+                    :type="testEmailResult.ok ? 'success' : 'error'"
+                    :title="testEmailResult.ok ? $t('testEmailSuccess') : $t('testEmailFailed')">
+            <template v-if="testEmailResult.ok">
+              <div>{{ $t('testEmailProvider') }}: {{ testEmailResult.provider }}</div>
+              <div style="word-break: break-all">Message ID: {{ testEmailResult.messageId }}</div>
+              <div v-if="testEmailResult.fallback">{{ $t('testEmailFallback') }}</div>
+            </template>
+            <template v-else>{{ testEmailResult.message }}</template>
+          </el-alert>
+          <el-button type="primary" :loading="testEmailLoading" @click="submitTestEmail">{{ $t('testEmailSubmit') }}</el-button>
         </form>
       </el-dialog>
       <el-dialog v-model="turnstileShow" :title="$t('addTurnstileSecret')" width="340"
@@ -930,7 +980,7 @@ Authorization: &lt;secret&gt;</pre>
 
 <script setup>
 import {computed, defineOptions, nextTick, reactive, ref} from "vue";
-import {deleteBackground, setBackground, setBlackList, settingQuery, settingSet} from "@/request/setting.js";
+import {deleteBackground, setBackground, setBlackList, settingQuery, settingSet, testEmailSend} from "@/request/setting.js";
 import {useSettingStore} from "@/store/setting.js";
 import {useUiStore} from "@/store/ui.js";
 import {useUserStore} from "@/store/user.js";
@@ -945,6 +995,7 @@ import {getTextWidth} from "@/utils/text.js";
 import {fileToBase64} from "@/utils/file-utils.js"
 import {useI18n} from 'vue-i18n';
 import axios from "axios";
+import {hasPerm} from "@/perm/perm.js";
 
 defineOptions({
   name: 'sys-setting'
@@ -1654,6 +1705,63 @@ function openCut() {
   }
 }
 
+const sendProviderOptions = computed(() => [
+  {value: 'auto', label: t('sendProviderAuto')},
+  {value: 'cloudflare', label: t('sendProviderCloudflare')},
+  {value: 'resend', label: 'Resend'},
+])
+const testProviderOptions = computed(() => [
+  {value: '', label: t('sendProviderCurrent')},
+  {value: 'cloudflare', label: t('sendProviderCloudflare')},
+  {value: 'resend', label: 'Resend'},
+])
+const testEmailShow = ref(false)
+const testEmailLoading = ref(false)
+const testEmailResult = ref(null)
+const testEmailForm = reactive({to: '', from: '', provider: ''})
+
+const canSetSetting = computed(() => hasPerm('setting:set'))
+
+function changeSendProvider(value) {
+  if (!settingReady.value || settingLoading.value) return
+  backupSetting()
+  changeField('sendProvider', value)
+}
+
+function openTestEmail() {
+  testEmailShow.value = true
+}
+
+function submitTestEmail() {
+  const to = testEmailForm.to.trim()
+  if (!isEmail(to)) {
+    ElMessage({message: t('notEmailMsg'), type: 'error', plain: true})
+    return
+  }
+  const from = testEmailForm.from.trim()
+  if (from && !isEmail(from)) {
+    ElMessage({message: t('notEmailMsg'), type: 'error', plain: true})
+    return
+  }
+  if (testEmailLoading.value) return
+  testEmailLoading.value = true
+  testEmailResult.value = null
+  const params = {to}
+  if (from) params.from = from
+  if (testEmailForm.provider) params.provider = testEmailForm.provider
+  testEmailSend(params).then((data) => {
+    testEmailResult.value = {ok: true, ...data}
+  }).catch((e) => {
+    // Business errors reject with {code, message}; HTTP errors reject with an AxiosError
+    const message = e?.response?.data?.message || e?.response?.data?.error
+        || e?.message
+        || t('reqFailErrorMsg')
+    testEmailResult.value = {ok: false, message}
+  }).finally(() => {
+    testEmailLoading.value = false
+  })
+}
+
 function openResendForm() {
   resendTokenFormShow.value = true
 }
@@ -1869,6 +1977,12 @@ function editSetting(settingForm, refreshStatus = true) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.send-provider-select {
+  width: 100%;
+  min-width: 150px;
+  max-width: 280px;
 }
 
 .setting-item {
